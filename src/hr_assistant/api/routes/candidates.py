@@ -1,0 +1,37 @@
+from fastapi import APIRouter, Query, Request
+
+from hr_assistant.api.dependencies import get_container
+from hr_assistant.schemas.candidate import AuditEventOut, CandidateOut
+from hr_assistant.schemas.matching import (
+    CandidateSearchHit,
+    CompareCandidatesRequest,
+    CompareCandidatesResponse,
+    SearchRequest,
+)
+
+router = APIRouter()
+
+
+@router.get("", response_model=list[CandidateOut])
+async def list_candidates(request: Request, limit: int = Query(default=100, ge=1, le=100)):
+    return await get_container(request).candidates.list(limit)
+
+
+@router.get("/{candidate_id}", response_model=CandidateOut)
+async def get_candidate(candidate_id: str, request: Request):
+    return await get_container(request).candidates.get(candidate_id)
+
+
+@router.get("/{candidate_id}/history", response_model=list[AuditEventOut])
+async def get_candidate_history(candidate_id: str, request: Request):
+    return await get_container(request).candidates.history(candidate_id)
+
+
+@router.post("/search", response_model=list[CandidateSearchHit])
+async def search_candidates(data: SearchRequest, request: Request):
+    return await get_container(request).search.search(data.query, data.limit)
+
+
+@router.post("/compare", response_model=CompareCandidatesResponse)
+async def compare_candidates(data: CompareCandidatesRequest, request: Request):
+    return await get_container(request).matching.compare(data.vacancy_id, data.candidate_ids)
