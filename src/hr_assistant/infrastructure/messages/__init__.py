@@ -1,0 +1,2 @@
+"""Outbound message delivery adapters."""
+
