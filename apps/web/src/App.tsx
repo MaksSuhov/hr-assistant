@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 
@@ -76,34 +78,6 @@ function initials(name: string | null) {
 
 function dateLabel(value: string) {
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(new Date(value));
-}
-
-function AssistantMarkdown({ content }: { content: string }) {
-  const blocks = content.split(/```([^\n`]*)\n([\s\S]*?)```/g);
-  return <div className="markdown-content">{blocks.map((part, index) => {
-    if (index % 3 === 1) return null;
-    if (index % 3 === 2) return <pre key={index}><code>{part}</code></pre>;
-    return part.split(/\n{2,}/).filter(Boolean).map((block, blockIndex) => {
-      const lines = block.split("\n");
-      if (lines.every((line) => /^\s*[-*+]\s+/.test(line))) return <ul key={`${index}-${blockIndex}`}>{lines.map((line, lineIndex) => <li key={lineIndex}><InlineMarkdown text={line.replace(/^\s*[-*+]\s+/, "")} /></li>)}</ul>;
-      if (lines.every((line) => /^\s*\d+[.)]\s+/.test(line))) return <ol key={`${index}-${blockIndex}`}>{lines.map((line, lineIndex) => <li key={lineIndex}><InlineMarkdown text={line.replace(/^\s*\d+[.)]\s+/, "")} /></li>)}</ol>;
-      const heading = block.match(/^(#{1,6})\s+(.+)$/);
-      if (heading) return <h3 key={`${index}-${blockIndex}`}><InlineMarkdown text={heading[2]} /></h3>;
-      return <p key={`${index}-${blockIndex}`}>{lines.map((line, lineIndex) => <span key={lineIndex}>{lineIndex > 0 && <br />}<InlineMarkdown text={line} /></span>)}</p>;
-    });
-  })}</div>;
-}
-
-function InlineMarkdown({ text }: { text: string }) {
-  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\))/g);
-  return <>{tokens.map((token, index) => {
-    if (token.startsWith("**") || token.startsWith("__")) return <strong key={index}>{token.slice(2, -2)}</strong>;
-    if ((token.startsWith("*") && token.endsWith("*")) || (token.startsWith("_") && token.endsWith("_"))) return <em key={index}>{token.slice(1, -1)}</em>;
-    if (token.startsWith("`") && token.endsWith("`")) return <code key={index}>{token.slice(1, -1)}</code>;
-    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
-    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
-    return token;
-  })}</>;
 }
 
 export default function App() {
@@ -496,7 +470,7 @@ function FilePicker({ file, onChange }: { file: File | null; onChange: (file: Fi
 function AssistantPanel({ messages, draft, setDraft, pending, configured, onSend, onClose }: { messages: ChatMessage[]; draft: string; setDraft: (value: string) => void; pending: boolean; configured: boolean | null; onSend: () => void; onClose: () => void }) {
   const listRef = useCallback((node: HTMLDivElement | null) => { if (node) node.scrollTop = node.scrollHeight; }, [messages.length, messages[messages.length - 1]?.content]);
   const suggestions = ["Какие кандидаты подходят на эту роль?", "Сравни опыт двух кандидатов", "Какие вопросы задать на интервью?"];
-  return <><button className="drawer-scrim" onClick={onClose} aria-label="Закрыть чат" /><aside className="assistant-panel"><header className="chat-header"><div className="chat-brand"><span className="chat-brand-icon"><Glyph name="sparkle" size={17} /></span><span><strong>Ассистент</strong><small><i /> Помощник команды</small></span></div><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Glyph name="close" size={18} /></button></header><div className="chat-context"><span>КОНТЕКСТ</span><p>Загруженные резюме и открытые вакансии</p></div><div className="chat-messages" ref={listRef}>{!messages.length && <div className="chat-welcome"><span className="welcome-sparkle"><Glyph name="sparkle" size={23} /></span><div className="eyebrow">РАБОЧИЙ ПОМОЩНИК</div><h2>С чего начнём?</h2><p>Я помогу найти опыт в резюме и подготовить вопросы для интервью. Решение остаётся за вами.</p><div className="suggestion-list">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => { setDraft(suggestion); }}>{suggestion}<Glyph name="arrow" size={14} /></button>)}</div></div>}{messages.map((message) => <div className={`message ${message.role}`} key={message.id}><span className="message-avatar">{message.role === "assistant" ? <Glyph name="sparkle" size={14} /> : "Вы"}</span><div className="message-content">{message.role === "assistant" ? <AssistantMarkdown content={message.content} /> : message.content}{message.streaming && !message.content && <span className="typing"><i /><i /><i /></span>}{message.streaming && message.content && <span className="stream-cursor" />}</div></div>)}{!configured && configured !== null && <div className="chat-config-note">Для чата добавьте OPENAI_API_KEY в файл .env.</div>}</div><form className="chat-compose" onSubmit={(event) => { event.preventDefault(); onSend(); }}><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Спросите о кандидатах или вакансии…" rows={3} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSend(); } }} /><div className="compose-bottom"><span>Enter — отправить · Shift + Enter — новая строка</span><button className="send-button" type="submit" disabled={!draft.trim() || pending} aria-label="Отправить"><Glyph name="send" size={17} /></button></div></form></aside></>;
+  return <><button className="drawer-scrim" onClick={onClose} aria-label="Закрыть чат" /><aside className="assistant-panel"><header className="chat-header"><div className="chat-brand"><span className="chat-brand-icon"><Glyph name="sparkle" size={17} /></span><span><strong>Ассистент</strong><small><i /> Помощник команды</small></span></div><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Glyph name="close" size={18} /></button></header><div className="chat-context"><span>КОНТЕКСТ</span><p>Загруженные резюме и открытые вакансии</p></div><div className="chat-messages" ref={listRef}>{!messages.length && <div className="chat-welcome"><span className="welcome-sparkle"><Glyph name="sparkle" size={23} /></span><div className="eyebrow">РАБОЧИЙ ПОМОЩНИК</div><h2>С чего начнём?</h2><p>Я помогу найти опыт в резюме и подготовить вопросы для интервью. Решение остаётся за вами.</p><div className="suggestion-list">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => { setDraft(suggestion); }}>{suggestion}<Glyph name="arrow" size={14} /></button>)}</div></div>}{messages.map((message) => <div className={`message ${message.role}`} key={message.id}><span className="message-avatar">{message.role === "assistant" ? <Glyph name="sparkle" size={14} /> : "Вы"}</span><div className="message-content">{message.role === "assistant" ? <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div> : message.content}{message.streaming && !message.content && <span className="typing"><i /><i /><i /></span>}{message.streaming && message.content && <span className="stream-cursor" />}</div></div>)}{!configured && configured !== null && <div className="chat-config-note">Для чата добавьте OPENAI_API_KEY в файл .env.</div>}</div><form className="chat-compose" onSubmit={(event) => { event.preventDefault(); onSend(); }}><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Спросите о кандидатах или вакансии…" rows={3} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSend(); } }} /><div className="compose-bottom"><span>Enter — отправить · Shift + Enter — новая строка</span><button className="send-button" type="submit" disabled={!draft.trim() || pending} aria-label="Отправить"><Glyph name="send" size={17} /></button></div></form></aside></>;
 }
 
 function CandidateDrawer({ candidate, onClose, onAsk }: { candidate: Candidate; onClose: () => void; onAsk: () => void }) {
