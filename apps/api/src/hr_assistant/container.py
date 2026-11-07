@@ -37,7 +37,7 @@ class ServiceContainer:
             self.chunker,
             self.vector_store,
         )
-        self.search = SearchService(uow_provider, self.vector_store)
+        self.search = SearchService(uow_provider, self.vector_store, self.llm, settings)
         self.matching = MatchingService(uow_provider, self.search, self.llm, settings)
         self.approvals = ApprovalService(uow_provider, self.message_sender)
         self.tool_executor = ToolExecutor(self.candidates, self.search, self.matching)

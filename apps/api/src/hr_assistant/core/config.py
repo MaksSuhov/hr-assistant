@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_base_url: str | None = None
     openai_chat_model: str = "gpt-4.1-mini"
+    search_enhancement_model: str = "gpt-4.1-mini"
+    hyde_enabled: bool = True
+    reranking_enabled: bool = True
+    reranking_candidate_pool: int = Field(default=30, ge=5, le=100)
     chat_reasoning_enabled: bool = False
     eval_judge_model: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
