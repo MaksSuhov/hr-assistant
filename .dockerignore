@@ -1,0 +1,14 @@
+.git
+.venv
+node_modules
+**/node_modules
+**/dist
+__pycache__
+**/__pycache__
+.ruff_cache
+.pytest_cache
+.env
+storage/resumes
+apps/api/storage/resumes
+**/data/*.db
+**/data/resumes/**

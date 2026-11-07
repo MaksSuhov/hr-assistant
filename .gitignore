@@ -7,4 +7,6 @@ __pycache__/
 data/
 storage/resumes/*
 !storage/resumes/.gitkeep
-
+apps/api/storage/resumes/*
+node_modules/
+apps/web/dist/

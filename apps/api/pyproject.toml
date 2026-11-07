@@ -23,11 +23,15 @@ dependencies = [
     "langchain-core>=0.3,<2.0",
     "langchain-text-splitters>=0.3,<2.0",
     "openai>=1.68,<3.0",
+    "httpx>=0.27,<1.0",
     "langfuse>=4.0,<6.0",
 ]
 
+[project.scripts]
+hr-eval = "eval.cli:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/hr_assistant"]
+packages = ["src/hr_assistant", "eval"]
 
 [tool.ruff]
 line-length = 100

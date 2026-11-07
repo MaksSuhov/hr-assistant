@@ -1,6 +1,8 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     env_file: .env
     environment:
       DATABASE_URL: sqlite+aiosqlite:////app/data/hr_assistant.db
@@ -13,6 +15,14 @@ services:
     depends_on:
       - qdrant
 
+  web:
+    build:
+      context: apps/web
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
   qdrant:
     image: qdrant/qdrant:v1.15.4
     ports:
@@ -24,4 +34,3 @@ services:
 volumes:
   hr_data:
   qdrant_data:
-
