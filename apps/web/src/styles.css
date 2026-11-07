@@ -50,6 +50,16 @@ a { color: inherit; text-decoration: none; }
 .profile-meta strong { font-size: 10px; font-weight: 600; }
 .profile-meta span { margin-top: 3px; color: #969084; font-size: 9px; }
 .profile-dot { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: #90a27f; }
+.auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 0%, #fffefa 0, #f5f2eb 65%); }
+.auth-card { width: min(410px, 100%); display: grid; gap: 15px; padding: 34px; border: 1px solid #e9e3d8; border-radius: 9px; background: #fffefa; box-shadow: 0 18px 55px rgba(40, 34, 26, .07); }
+.auth-brand { margin: 0 0 14px -12px; }
+.auth-card h1 { margin: 0; font: 500 30px/1.15 "Manrope", sans-serif; letter-spacing: -1.1px; }
+.auth-card > p { margin: -6px 0 4px; color: #807a70; font-size: 12px; line-height: 1.6; }
+.auth-submit { width: 100%; min-height: 42px; font-size: 11px; }
+.auth-switch, .auth-candidate-link { padding: 4px; border: 0; color: #8f463d; background: transparent; text-align: center; font-size: 10px; }
+.auth-switch:hover, .auth-candidate-link:hover { color: var(--red-dark); text-decoration: underline; }
+.auth-error { padding: 10px; border: 1px solid #ead3cd; border-radius: 4px; color: #8d463e; background: #fbf1ed; font-size: 10px; }
+.auth-logout { margin-left: auto; padding: 5px 7px; border: 1px solid #e4ddd2; border-radius: 4px; color: #7e554b; background: #fffefa; font-size: 9px; }
 
 .main-area { min-width: 0; flex: 1; display: flex; flex-direction: column; padding: 0 43px; }
 .topbar { height: 71px; flex: 0 0 71px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e7e1d7; }

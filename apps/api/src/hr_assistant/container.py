@@ -1,4 +1,5 @@
 from hr_assistant.application.approval_service import ApprovalService
+from hr_assistant.application.auth import AuthService
 from hr_assistant.application.candidate_service import CandidateService
 from hr_assistant.application.chat_service import ChatService
 from hr_assistant.application.matching_service import MatchingService
@@ -19,6 +20,7 @@ class ServiceContainer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.database = Database(settings)
+        self.auth = AuthService(self.database, settings)
         self.llm = OpenAIProvider(settings)
         self.vector_store = QdrantResumeStore(settings, self.llm)
         self.tracer = LangfuseTracer(settings)

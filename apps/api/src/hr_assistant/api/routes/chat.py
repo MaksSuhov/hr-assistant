@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from hr_assistant.api.dependencies import get_actor_id, get_container
+from hr_assistant.application.auth import authenticated_user
 from hr_assistant.application.errors import ApplicationError
 from hr_assistant.schemas.chat import ChatRequest
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(authenticated_user)])
 
 
 def _sse(event: str, data: dict) -> str:

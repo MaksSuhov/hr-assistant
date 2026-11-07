@@ -52,7 +52,7 @@ Qdrant поднимается сервисом `qdrant` из `docker-compose.yml
 
 ## Основные маршруты
 
-Все REST-маршруты находятся под `/api/v1`. Для журнала действий API принимает `X-Actor-Id`; без заголовка используется `local-hr`. Это идентификатор автора события, а не механизм аутентификации.
+Все REST-маршруты находятся под `/api/v1`. Кадровые маршруты и MCP требуют входа. Первый созданный аккаунт получает роль администратора; публичная регистрация затем закрыта. Изменяющие запросы требуют CSRF-заголовок `X-CSRF-Token`, который веб-интерфейс добавляет автоматически. Портал `/candidate` остаётся публичным и использует отдельный маршрут загрузки.
 
 | Метод | Маршрут | Назначение |
 |---|---|---|
@@ -71,17 +71,36 @@ Qdrant поднимается сервисом `qdrant` из `docker-compose.yml
 | `GET` | `/approvals/outbox` | Посмотреть подтверждённые сообщения в очереди |
 | `POST` | `/approvals/{id}/approve` или `/reject` | Подтвердить или отклонить действие |
 | `POST` | `/chat/stream` | Чат с SSE |
+| `POST` | `/auth/register` | Создать первый аккаунт администратора |
+| `POST` | `/auth/users` | Создать аккаунт рекрутера (только администратор) |
+| `POST` | `/auth/login` | Войти по почте и паролю |
+| `POST` | `/auth/refresh` | Обновить access cookie и ротировать refresh cookie |
+| `POST` | `/auth/logout` | Завершить сессию и отозвать refresh токен |
+| `GET` | `/auth/me` | Текущий пользователь и роль |
+| `GET` | `/auth/oauth/google` | Начать вход Google OAuth 2.0 (если настроен) |
+| `POST` | `/resumes/public` | Публичная загрузка резюме из портала кандидата |
+
+Access и refresh токены хранятся в `HttpOnly` cookies. Настройте `AUTH_SECRET_KEY`, а в production включите `AUTH_COOKIE_SECURE=true`. Для Google укажите OAuth client ID/secret и callback URI из `.env.example`. Первый аккаунт получает роль администратора; администратор может создать учётные записи рекрутеров через `POST /auth/users`.
 
 Смена статуса происходит только при вызове `approve`. Черновик сообщения ничего не отправляет. После подтверждения сообщение отправится через SMTP, если заданы `SMTP_HOST` и `SMTP_FROM`; иначе оно останется в SQLite outbox со статусом `queued`. Статус и ошибки доставки доступны через `/approvals/outbox`.
 
 ## Примеры
 
+Сначала создайте первого администратора или войдите и сохраните cookies. Для изменяющих запросов передайте CSRF cookie в заголовке:
+
+```bash
+curl -c cookies.txt -b cookies.txt -X POST http://localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"hr@example.org","password":"your-password"}'
+CSRF=$(awk '$5 == "csrf_token" {print $6}' cookies.txt)
+```
+
 Создать вакансию:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/vacancies \
+  -b cookies.txt -c cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -H 'X-Actor-Id: hr@example.org' \
   -d '{
     "title":"Backend-разработчик",
     "department":"Платформа",
@@ -97,7 +116,7 @@ curl -X POST http://localhost:8000/api/v1/vacancies \
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/resumes \
-  -H 'X-Actor-Id: hr@example.org' \
+  -b cookies.txt -c cookies.txt -H "X-CSRF-Token: $CSRF" \
   -F 'candidate_name=Алексей Иванов' \
   -F 'source=Почта отдела кадров' \
   -F 'file=@./resume.pdf'
@@ -107,11 +126,11 @@ curl -X POST http://localhost:8000/api/v1/resumes \
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/approvals/candidates/CANDIDATE_ID/status-change/request \
-  -H 'Content-Type: application/json' -H 'X-Actor-Id: hr@example.org' \
+  -b cookies.txt -c cookies.txt -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   -d '{"status":"interview","reason":"HR просмотрел резюме"}'
 
 curl -X POST http://localhost:8000/api/v1/approvals/APPROVAL_ID/approve \
-  -H 'Content-Type: application/json' -H 'X-Actor-Id: hr@example.org' \
+  -b cookies.txt -c cookies.txt -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   -d '{"note":"Подтверждаю приглашение на интервью"}'
 ```
 
@@ -119,7 +138,7 @@ SSE чат:
 
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/chat/stream \
-  -H 'Content-Type: application/json' -H 'X-Actor-Id: hr@example.org' \
+  -b cookies.txt -c cookies.txt -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   -d '{"message":"Найди кандидатов с опытом FastAPI и сравни их по вакансии VACANCY_ID"}'
 ```
 
@@ -167,5 +186,5 @@ python -m eval performance eval/data/example.jsonl --base-url http://localhost:8
 - При сканированных PDF без текстового слоя извлечение может вернуть пустой текст; OCR не включён.
 - Если Qdrant или OpenAI временно недоступны, исходный документ остаётся в SQLite и локальном хранилище, а состояние индекса фиксируется в карточке и журнале.
 - История чата сохраняется в SQLite; в Langfuse передаётся текст запроса для наблюдаемости.
-- Автор события берётся из `X-Actor-Id`. Перед внешним развёртыванием добавьте аутентификацию и контроль доступа на уровне API и MCP.
+- Для пользователя применяются роли `admin` и `recruiter`; кадровые API и MCP закрыты без активной сессии.
 - Схема SQLite создаётся при запуске через SQLAlchemy `create_all`; миграции Alembic и OCR не входят в первую версию.

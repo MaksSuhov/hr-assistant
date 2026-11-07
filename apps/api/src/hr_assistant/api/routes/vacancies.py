@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from hr_assistant.api.dependencies import get_actor_id, get_container
+from hr_assistant.application.auth import authenticated_user
 from hr_assistant.container import ServiceContainer
 from hr_assistant.schemas.matching import CompareCandidatesResponse
 from hr_assistant.schemas.vacancy import VacancyCreate, VacancyOut, VacancyUpdate
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(authenticated_user)])
 
 
 class VacancyMatchRequest(BaseModel):

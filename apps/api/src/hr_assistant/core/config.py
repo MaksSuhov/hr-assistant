@@ -10,6 +10,14 @@ class Settings(BaseSettings):
 
     app_name: str = "HR Assistant API"
     api_v1_prefix: str = "/api/v1"
+    auth_secret_key: SecretStr = SecretStr("change-this-secret-before-deploying-please")
+    access_token_minutes: int = Field(default=15, ge=1, le=1440)
+    refresh_token_days: int = Field(default=30, ge=1, le=365)
+    auth_cookie_secure: bool = False
+    oauth_google_client_id: str | None = None
+    oauth_google_client_secret: SecretStr | None = None
+    oauth_google_redirect_uri: str | None = None
+    oauth_frontend_url: str = "http://localhost:3000"
     log_level: str = "INFO"
 
     database_url: str = "sqlite+aiosqlite:///./data/hr_assistant.db"

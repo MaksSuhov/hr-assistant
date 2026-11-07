@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from hr_assistant.api.dependencies import get_container
+from hr_assistant.application.auth import authenticated_user
 from hr_assistant.schemas.candidate import AuditEventOut, CandidateOut
 from hr_assistant.schemas.matching import (
     CandidateSearchHit,
@@ -9,7 +10,7 @@ from hr_assistant.schemas.matching import (
     SearchRequest,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(authenticated_user)])
 
 
 @router.get("", response_model=list[CandidateOut])

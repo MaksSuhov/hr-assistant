@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastmcp.utilities.lifespan import combine_lifespans
 
@@ -41,7 +41,18 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 app.mount("/mcp", mcp_http_app, name="mcp")
 
 
+@app.middleware("http")
+async def protect_mcp(request: Request, call_next):
+    if request.url.path.startswith("/mcp"):
+        from hr_assistant.application.auth import authenticated_user
+
+        try:
+            await authenticated_user(request)
+        except HTTPException as error:
+            return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
+    return await call_next(request)
+
+
 @app.exception_handler(ApplicationError)
 async def application_error_handler(_request: Request, error: ApplicationError):
     return JSONResponse(status_code=error.status_code, content={"detail": str(error)})
-

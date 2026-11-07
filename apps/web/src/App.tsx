@@ -5,6 +5,23 @@ import remarkGfm from "remark-gfm";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 
+type AuthUser = { id: string; email: string; full_name: string; role: string };
+let csrfToken = "";
+function readCsrfToken() {
+  return document.cookie.split("; ").find((part) => part.startsWith("csrf_token="))?.split("=").slice(1).join("=") ?? "";
+}
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}, retry = true): Promise<Response> {
+  csrfToken = readCsrfToken() || csrfToken;
+  const headers = new Headers(init.headers);
+  if (csrfToken && !["GET", "HEAD", "OPTIONS"].includes((init.method ?? "GET").toUpperCase())) headers.set("X-CSRF-Token", csrfToken);
+  const response = await fetch(input, { ...init, headers, credentials: "include" });
+  if (response.status === 401 && retry && !String(input).includes("/auth/")) {
+    const refreshed = await fetch(API + "/auth/refresh", { method: "POST", credentials: "include", headers: { "X-CSRF-Token": readCsrfToken() || csrfToken } });
+    if (refreshed.ok) { csrfToken = readCsrfToken() || csrfToken; return apiFetch(input, init, false); }
+  }
+  return response;
+}
+
 type CandidateDocument = {
   id: string;
   filename: string;
@@ -113,13 +130,21 @@ export default function App() {
   const [portalFile, setPortalFile] = useState<File | null>(null);
   const [portalSubmitted, setPortalSubmitted] = useState(false);
   const [activeTab, setActiveTab] = useState<"file" | "link">("file");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
 
   const refreshData = useCallback(async () => {
     try {
       const [candidateResponse, vacancyResponse, healthResponse] = await Promise.all([
-        fetch(`${API}/candidates`),
-        fetch(`${API}/vacancies`),
-        fetch(`${API}/health`),
+        apiFetch(`${API}/candidates`),
+        apiFetch(`${API}/vacancies`),
+        apiFetch(`${API}/health`),
       ]);
       if (!candidateResponse.ok || !vacancyResponse.ok) throw new Error("API unavailable");
       setCandidates(await candidateResponse.json());
@@ -135,6 +160,24 @@ export default function App() {
   }, []);
 
   useEffect(() => { void refreshData(); }, [refreshData]);
+  useEffect(() => {
+    void apiFetch(API + "/auth/me").then(async (response) => {
+      if (response.ok) setAuthUser(await response.json());
+      else if (response.status === 401) setAuthUser(null);
+      setAuthChecked(true);
+    }).catch(() => setAuthChecked(true));
+  }, []);
+  const submitAuth = async (event: FormEvent) => {
+    event.preventDefault(); setAuthBusy(true); setAuthMessage("");
+    try {
+      const response = await fetch(API + "/auth/" + authMode, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: authEmail, password: authPassword, ...(authMode === "register" ? { full_name: authName } : {}) }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Не удалось войти.");
+      csrfToken = readCsrfToken(); setAuthUser(data); await refreshData();
+    } catch (error) { setAuthMessage(error instanceof Error ? error.message : "Не удалось войти."); }
+    finally { setAuthBusy(false); }
+  };
+  const logout = async () => { await apiFetch(API + "/auth/logout", { method: "POST" }); setAuthUser(null); setCandidates([]); setVacancies([]); };
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 3600);
@@ -159,9 +202,9 @@ export default function App() {
     addMessage({ id: crypto.randomUUID(), role: "user", content: text });
     addMessage({ id: answerId, role: "assistant", content: "", streaming: true });
     try {
-      const response = await fetch(`${API}/chat/stream`, {
+      const response = await apiFetch(`${API}/chat/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Actor-Id": isCandidatePortal ? "candidate-portal" : "local-hr" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, conversation_id: conversationId }),
       });
       if (!response.ok || !response.body) {
@@ -217,9 +260,9 @@ export default function App() {
     if (candidateName.trim()) form.append("candidate_name", candidateName.trim());
     form.append("source", audience === "candidate" ? "Портал кандидата" : uploadSource);
     try {
-      const response = await fetch(`${API}/resumes`, {
+      const response = await apiFetch(`${API}${audience === "candidate" ? "/resumes/public" : "/resumes"}`, {
         method: "POST",
-        headers: { "X-Actor-Id": audience === "candidate" ? "candidate-portal" : "local-hr" },
+        headers: {},
         body: form,
       });
       const result = await response.json();
@@ -272,9 +315,9 @@ export default function App() {
   const createVacancy = async (data: { title: string; department: string; description: string; requirements: string[] }) => {
     setCreatingVacancy(true);
     try {
-      const response = await fetch(`${API}/vacancies`, {
+      const response = await apiFetch(`${API}/vacancies`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Actor-Id": "local-hr" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: data.title,
           department: data.department || null,
@@ -296,12 +339,15 @@ export default function App() {
 
   const openCandidate = async (candidate: Candidate) => {
     try {
-      const response = await fetch(`${API}/candidates/${candidate.id}`);
+      const response = await apiFetch(`${API}/candidates/${candidate.id}`);
       if (response.ok) setSelectedCandidate(await response.json());
       else setSelectedCandidate(candidate);
     } catch { setSelectedCandidate(candidate); }
   };
 
+  if (!isCandidatePortal && (!authChecked || !authUser)) {
+    return <div className="auth-shell"><form className="auth-card" onSubmit={submitAuth}><a className="brand auth-brand" href="/"><span className="brand-mark"><span /></span><span className="brand-name">линия<span>.</span></span></a><div className="eyebrow"><span className="eyebrow-line" /> РАБОЧЕЕ ПРОСТРАНСТВО</div><h1>{authMode === "login" ? "С возвращением." : "Создать аккаунт."}</h1><p>Войдите, чтобы работать с кандидатами и вакансиями.</p>{authMode === "register" && <label className="form-label"><span className="field-title">Ваше имя</span><input required minLength={2} value={authName} onChange={(event) => setAuthName(event.target.value)} placeholder="Имя и фамилия" /></label>}<label className="form-label"><span className="field-title">Рабочая почта</span><input type="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="name@company.ru" /></label><label className="form-label"><span className="field-title">Пароль</span><input type="password" required minLength={authMode === "register" ? 10 : 1} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder={authMode === "register" ? "Не менее 10 символов" : "Ваш пароль"} /></label>{authMessage && <div className="auth-error">{authMessage}</div>}<button className="button button-primary auth-submit" disabled={authBusy}>{authBusy ? "Подождите…" : authMode === "login" ? "Войти" : "Создать аккаунт"}</button><button className="button button-outline auth-submit" type="button" onClick={() => { window.location.href = API + "/auth/oauth/google"; }}>Продолжить с Google</button><button className="auth-switch" type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "Новый рекрутер? Создать аккаунт" : "Уже есть аккаунт? Войти"}</button><a className="auth-candidate-link" href="/candidate">Я кандидат — передать резюме</a></form></div>;
+  }
   if (isCandidatePortal) {
     return <CandidatePortal name={portalName} setName={setPortalName} file={portalFile} setFile={setPortalFile} submitted={portalSubmitted} uploading={uploading} submit={(event) => void submitUpload(event, "candidate")} />;
   }
@@ -321,7 +367,7 @@ export default function App() {
         </nav>
         <div className="sidebar-foot">
           <a className="candidate-link" href="/candidate"><span className="portal-icon"><Glyph name="arrow" size={16} /></span><span><strong>Вы кандидат?</strong><small>Передать резюме</small></span></a>
-          <div className="profile-chip"><div className="profile-avatar">HR</div><div className="profile-meta"><strong>Команда найма</strong><span>Локальная сессия</span></div><span className="profile-dot" /></div>
+          <div className="profile-chip"><div className="profile-avatar">{initials(authUser?.full_name ?? null)}</div><div className="profile-meta"><strong>{authUser?.full_name}</strong><span>{authUser?.role === "admin" ? "Администратор" : "Рекрутер"}</span></div><button className="auth-logout" onClick={() => void logout()}>Выйти</button></div>
         </div>
       </aside>
 
