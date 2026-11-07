@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_base_url: str | None = None
     openai_chat_model: str = "gpt-4.1-mini"
+    chat_reasoning_enabled: bool = False
     eval_judge_model: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int = Field(default=1536, gt=0)

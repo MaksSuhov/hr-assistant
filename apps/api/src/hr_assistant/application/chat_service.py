@@ -128,6 +128,7 @@ class ChatService:
                     tools=HR_ASSISTANT_TOOLS,
                     tool_choice="auto",
                     stream=True,
+                    extra_body=self.llm.chat_extra_body,
                 )
                 async for chunk in first_stream:
                     # RouterAI ends every stream with a usage-only chunk whose
@@ -205,6 +206,7 @@ class ChatService:
                         messages=messages,
                         tool_choice="none",
                         stream=True,
+                        extra_body=self.llm.chat_extra_body,
                     )
                     async for chunk in final_stream:
                         if not chunk.choices:

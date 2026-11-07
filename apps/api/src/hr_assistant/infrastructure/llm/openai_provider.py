@@ -1,3 +1,5 @@
+from typing import Any
+
 from openai import AsyncOpenAI
 
 from hr_assistant.core.config import Settings
@@ -16,6 +18,19 @@ class OpenAIProvider:
     @property
     def configured(self) -> bool:
         return self.client is not None
+
+    @property
+    def chat_extra_body(self) -> dict[str, Any]:
+        """Provider-specific chat parameters the OpenAI SDK passes through verbatim.
+
+        Reasoning models such as qwen3.7 spend seconds emitting a hidden
+        reasoning block before the first visible token. Gateways expose that
+        switch with the OpenRouter-style `reasoning` object, which is not a
+        standard OpenAI field, so it travels in `extra_body`.
+        """
+        if self.settings.chat_reasoning_enabled:
+            return {}
+        return {"reasoning": {"enabled": False}}
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:

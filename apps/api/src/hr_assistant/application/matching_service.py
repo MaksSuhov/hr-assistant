@@ -101,6 +101,7 @@ class MatchingService:
             model=self.settings.openai_chat_model,
             temperature=0.1,
             response_format={"type": "json_object"},
+            extra_body=self.llm.chat_extra_body,
             messages=[
                 {
                     "role": "system",
