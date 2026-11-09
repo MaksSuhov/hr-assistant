@@ -27,4 +27,3 @@ class ChatRepository:
             .limit(limit)
         )
         return list(reversed(list(result)))
-

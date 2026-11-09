@@ -12,4 +12,3 @@ class ConflictError(ApplicationError):
 
 class ServiceUnavailableError(ApplicationError):
     status_code = 503
-

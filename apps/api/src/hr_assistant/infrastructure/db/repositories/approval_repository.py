@@ -30,9 +30,7 @@ class ApprovalRepository:
 
     async def list_outbox(self, limit: int = 100) -> list[OutboxMessageRecord]:
         result = await self.session.scalars(
-            select(OutboxMessageRecord)
-            .order_by(OutboxMessageRecord.queued_at.desc())
-            .limit(limit)
+            select(OutboxMessageRecord).order_by(OutboxMessageRecord.queued_at.desc()).limit(limit)
         )
         return list(result)
 

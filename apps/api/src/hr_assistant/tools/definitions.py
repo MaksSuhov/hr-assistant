@@ -1,4 +1,6 @@
-HR_ASSISTANT_TOOLS = [
+from typing import Any
+
+HR_ASSISTANT_TOOLS: list[Any] = [
     {
         "type": "function",
         "function": {
@@ -50,4 +52,3 @@ HR_ASSISTANT_TOOLS = [
         },
     },
 ]
-

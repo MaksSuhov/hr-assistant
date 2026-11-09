@@ -24,4 +24,3 @@ async def record_event(
             details=details,
         )
     )
-

@@ -1,2 +1,1 @@
 """Outbound message delivery adapters."""
-

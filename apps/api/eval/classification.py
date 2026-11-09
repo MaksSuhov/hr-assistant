@@ -52,8 +52,7 @@ def evaluate_classification(records: list[dict[str, Any]]) -> dict[str, Any]:
     support_total = sum(supports)
     macro_f1 = sum(class_f1s) / len(class_f1s) if class_f1s else 0.0
     weighted_f1 = (
-        sum(f1 * support for f1, support in zip(class_f1s, supports, strict=True))
-        / support_total
+        sum(f1 * support for f1, support in zip(class_f1s, supports, strict=True)) / support_total
         if support_total
         else 0.0
     )

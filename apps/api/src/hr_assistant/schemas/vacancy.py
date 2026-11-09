@@ -40,4 +40,3 @@ class VacancyOut(BaseModel):
     requirements: list[RequirementOut]
     created_at: datetime
     updated_at: datetime
-

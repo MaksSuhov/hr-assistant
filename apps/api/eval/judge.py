@@ -79,12 +79,13 @@ async def evaluate_judge(
             "in the active Python environment."
         ) from error
 
-    if not settings.openai_configured:
+    api_key = settings.openai_api_key
+    if not settings.openai_configured or api_key is None:
         raise RuntimeError("Set OPENAI_API_KEY to run judge evaluation.")
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
     client = AsyncOpenAI(
-        api_key=settings.openai_api_key.get_secret_value(),
+        api_key=api_key.get_secret_value(),
         base_url=settings.openai_base_url,
     )
     semaphore = asyncio.Semaphore(concurrency)

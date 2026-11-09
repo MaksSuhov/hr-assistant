@@ -23,8 +23,8 @@ async def evaluate_performance(
         import httpx
     except ImportError as error:
         raise RuntimeError(
-            "Performance evaluation requires project dependencies. Run `python -m pip install -e .` "
-            "in the active Python environment."
+            "Performance evaluation requires project dependencies. "
+            "Run `python -m pip install -e .` in the active Python environment."
         ) from error
 
     if concurrency < 1:
@@ -34,10 +34,13 @@ async def evaluate_performance(
     timeout = httpx.Timeout(300.0, connect=15.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
+
         async def measure(index: int, record: dict[str, Any]) -> dict[str, Any]:
             message = record.get("question", record.get("query", record.get("message")))
             if not isinstance(message, str) or not message.strip():
-                raise ValueError(f"Record {index + 1} needs a non-empty question, query, or message")
+                raise ValueError(
+                    f"Record {index + 1} needs a non-empty question, query, or message"
+                )
             payload: dict[str, Any] = {"message": message}
             conversation_id = record.get("conversation_id")
             if conversation_id:
@@ -45,7 +48,9 @@ async def evaluate_performance(
             headers = {"X-Actor-Id": actor_id, "X-Eval-Metrics": "true"}
             async with semaphore:
                 started = time.perf_counter()
-                async with client.stream("POST", endpoint, json=payload, headers=headers) as response:
+                async with client.stream(
+                    "POST", endpoint, json=payload, headers=headers
+                ) as response:
                     if response.status_code >= 400:
                         body = (await response.aread()).decode("utf-8", errors="replace")
                         raise RuntimeError(

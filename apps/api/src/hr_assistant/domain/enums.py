@@ -31,4 +31,3 @@ class EvidenceStatus(StrEnum):
     PARTIAL = "partial"
     UNKNOWN = "unknown"
     NOT_FOUND = "not_found"
-

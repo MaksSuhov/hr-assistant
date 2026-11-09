@@ -35,4 +35,3 @@ class AuditEventOut(BaseModel):
     details: dict
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
-

@@ -37,7 +37,9 @@ def evaluate_retrieval(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     for index, record in enumerate(records):
         if candidate_mode:
-            relevant_raw = record.get("relevant_candidate_ids", record.get("expected_candidate_ids"))
+            relevant_raw = record.get(
+                "relevant_candidate_ids", record.get("expected_candidate_ids")
+            )
             retrieved_raw = record.get("retrieved_candidate_ids")
         else:
             relevant_raw = record.get("relevant_context_ids", record.get("expected_context_ids"))
@@ -53,13 +55,13 @@ def evaluate_retrieval(records: list[dict[str, Any]]) -> dict[str, Any]:
                 for context in contexts
                 if isinstance(context, dict) and context.get("id") is not None
             ]
-            retrieved_raw.extend(
-                context for context in contexts if not isinstance(context, dict)
-            )
+            retrieved_raw.extend(context for context in contexts if not isinstance(context, dict))
         if relevant_raw is None or not isinstance(relevant_raw, list):
             continue
         if not isinstance(retrieved_raw, list):
-            raise ValueError(f"{record.get('id', f'sample-{index + 1}')}: retrieved ids must be a list")
+            raise ValueError(
+                f"{record.get('id', f'sample-{index + 1}')}: retrieved ids must be a list"
+            )
 
         relevant = set(_unique(relevant_raw))
         ranked = _unique(retrieved_raw)
@@ -80,9 +82,7 @@ def evaluate_retrieval(records: list[dict[str, Any]]) -> dict[str, Any]:
             for rank, context_id in enumerate(ranked, 1)
             if context_id in relevant
         ]
-        average_precision = (
-            sum(precision_at_relevant) / len(relevant) if relevant else 0.0
-        )
+        average_precision = sum(precision_at_relevant) / len(relevant) if relevant else 0.0
 
         precisions.append(precision)
         recalls.append(recall)

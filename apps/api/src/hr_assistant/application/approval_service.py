@@ -11,8 +11,8 @@ from hr_assistant.schemas.approval import (
     ApprovalResult,
     MessageDraftRequest,
     OutboxMessageOut,
+    StatusChangeRequest,
 )
-from hr_assistant.schemas.approval import StatusChangeRequest
 
 
 class ApprovalService:
@@ -227,7 +227,11 @@ class ApprovalService:
                 action="approval_rejected",
                 entity_type="candidate" if candidate_id else "approval",
                 entity_id=candidate_id or approval.id,
-                details={"approval_id": approval.id, "action_type": approval.action_type, "note": note},
+                details={
+                    "approval_id": approval.id,
+                    "action_type": approval.action_type,
+                    "note": note,
+                },
             )
             await uow.commit()
             return ApprovalResult(

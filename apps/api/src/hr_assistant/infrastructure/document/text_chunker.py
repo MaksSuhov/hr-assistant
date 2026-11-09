@@ -13,4 +13,3 @@ class ResumeTextChunker:
     def split(self, text: str, metadata: dict | None = None) -> list[Document]:
         document = Document(page_content=text, metadata=metadata or {})
         return self._splitter.split_documents([document])
-

@@ -23,6 +23,7 @@ async def fetch_live_retrieval(
     timeout = httpx.Timeout(120.0, connect=15.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
+
         async def search(index: int, record: dict[str, Any]) -> dict[str, Any]:
             query = record.get("query", record.get("question"))
             if not isinstance(query, str) or not query.strip():
@@ -61,4 +62,6 @@ async def fetch_live_retrieval(
                 "retrieved_candidate_ids": candidate_ids,
             }
 
-        return await asyncio.gather(*(search(index, record) for index, record in enumerate(records)))
+        return await asyncio.gather(
+            *(search(index, record) for index, record in enumerate(records))
+        )

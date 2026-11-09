@@ -17,7 +17,7 @@ class VacancyRepository:
     async def get(self, vacancy_id: str) -> VacancyRecord | None:
         return await self.session.get(VacancyRecord, vacancy_id)
 
-    async def list(self, limit: int = 100) -> list[VacancyRecord]:
+    async def list_all(self, limit: int = 100) -> list[VacancyRecord]:
         result = await self.session.scalars(
             select(VacancyRecord).order_by(VacancyRecord.created_at.desc()).limit(limit)
         )
@@ -43,4 +43,3 @@ class VacancyRepository:
         )
         self.session.add_all(requirements)
         await self.session.flush()
-

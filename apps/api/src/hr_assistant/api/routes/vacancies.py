@@ -25,7 +25,7 @@ async def create_vacancy(
 
 @router.get("", response_model=list[VacancyOut])
 async def list_vacancies(request: Request, limit: int = Query(default=100, ge=1, le=100)):
-    return await get_container(request).vacancies.list(limit)
+    return await get_container(request).vacancies.list_vacancies(limit)
 
 
 @router.get("/{vacancy_id}", response_model=VacancyOut)
@@ -53,7 +53,7 @@ async def match_vacancy(
     await container.vacancies.get(vacancy_id)
     candidate_ids = data.candidate_ids
     if not candidate_ids:
-        candidates = await container.candidates.list(limit=10)
+        candidates = await container.candidates.list_candidates(limit=10)
         candidate_ids = [candidate.id for candidate in candidates]
     if not candidate_ids:
         return CompareCandidatesResponse(vacancy_id=vacancy_id, candidates=[])

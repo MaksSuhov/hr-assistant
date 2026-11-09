@@ -10,12 +10,14 @@ class LangfuseTracer:
 
     def __init__(self, settings: Settings) -> None:
         self._client = None
-        if settings.langfuse_configured:
+        public_key = settings.langfuse_public_key
+        secret_key = settings.langfuse_secret_key
+        if settings.langfuse_configured and public_key is not None and secret_key is not None:
             from langfuse import Langfuse
 
             self._client = Langfuse(
-                public_key=settings.langfuse_public_key.get_secret_value(),
-                secret_key=settings.langfuse_secret_key.get_secret_value(),
+                public_key=public_key.get_secret_value(),
+                secret_key=secret_key.get_secret_value(),
                 base_url=settings.langfuse_base_url,
             )
 
@@ -29,7 +31,7 @@ class LangfuseTracer:
         name: str,
         input_data: Any = None,
         *,
-        as_type: str = "agent",
+        as_type: Any = "agent",
         session_id: str | None = None,
         user_id: str | None = None,
         tags: list[str] | None = None,
@@ -54,7 +56,7 @@ class LangfuseTracer:
         name: str,
         input_data: Any = None,
         *,
-        as_type: str = "span",
+        as_type: Any = "span",
     ) -> Iterator[Any | None]:
         if self._client is None:
             yield None

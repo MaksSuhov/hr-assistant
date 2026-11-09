@@ -6,6 +6,7 @@ from typing import Any
 from hr_assistant.application.audit import record_event
 from hr_assistant.application.errors import NotFoundError
 from hr_assistant.application.ports import UnitOfWorkProvider
+from hr_assistant.domain.enums import VacancyStatus
 from hr_assistant.infrastructure.db.models import RequirementRecord, VacancyRecord
 from hr_assistant.schemas.vacancy import (
     RequirementInput,
@@ -73,9 +74,7 @@ class VacancyService:
                 "department": record.department,
                 "description": record.description,
                 "status": record.status,
-                "requirements": [
-                    r.text for r in await uow.vacancies.requirements(vacancy_id)
-                ],
+                "requirements": [r.text for r in await uow.vacancies.requirements(vacancy_id)],
             }
             await record_event(
                 uow,
@@ -95,9 +94,9 @@ class VacancyService:
                 raise NotFoundError(f"Vacancy {vacancy_id} was not found.")
             return await self._to_output(uow, record)
 
-    async def list(self, limit: int = 100) -> list[VacancyOut]:
+    async def list_vacancies(self, limit: int = 100) -> list[VacancyOut]:
         async with self.uow_provider() as uow:
-            records = await uow.vacancies.list(limit)
+            records = await uow.vacancies.list_all(limit)
             return [await self._to_output(uow, record) for record in records]
 
     @staticmethod
@@ -123,7 +122,7 @@ class VacancyService:
             title=record.title,
             department=record.department,
             description=record.description,
-            status=record.status,
+            status=VacancyStatus(record.status),
             requirements=[RequirementOut.model_validate(item) for item in requirements],
             created_at=record.created_at,
             updated_at=record.updated_at,

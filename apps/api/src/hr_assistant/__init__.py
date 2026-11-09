@@ -1,2 +1,1 @@
 """HR assistant backend."""
-

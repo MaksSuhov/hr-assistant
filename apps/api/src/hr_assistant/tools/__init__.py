@@ -1,2 +1,1 @@
 """LLM tool definitions."""
-

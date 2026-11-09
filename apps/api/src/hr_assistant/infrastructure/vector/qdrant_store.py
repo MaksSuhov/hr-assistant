@@ -16,11 +16,7 @@ class QdrantResumeStore:
     def __init__(self, settings: Settings, embeddings: EmbeddingProvider) -> None:
         self.settings = settings
         self.embeddings = embeddings
-        api_key = (
-            settings.qdrant_api_key.get_secret_value()
-            if settings.qdrant_api_key
-            else ""
-        )
+        api_key = settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else ""
         self.client = AsyncQdrantClient(
             url=settings.qdrant_url,
             api_key=api_key or None,

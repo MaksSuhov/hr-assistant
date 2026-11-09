@@ -9,7 +9,7 @@ class OpenAIProvider:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client: AsyncOpenAI | None = None
-        if settings.openai_configured:
+        if settings.openai_configured and settings.openai_api_key is not None:
             self.client = AsyncOpenAI(
                 api_key=settings.openai_api_key.get_secret_value(),
                 base_url=settings.openai_base_url,
@@ -18,6 +18,11 @@ class OpenAIProvider:
     @property
     def configured(self) -> bool:
         return self.client is not None
+
+    def require_client(self) -> AsyncOpenAI:
+        if self.client is None:
+            raise RuntimeError("OpenAI is not configured; set OPENAI_API_KEY to enable it.")
+        return self.client
 
     @property
     def chat_extra_body(self) -> dict[str, Any]:
@@ -47,4 +52,3 @@ class OpenAIProvider:
     async def close(self) -> None:
         if self.client:
             await self.client.close()
-

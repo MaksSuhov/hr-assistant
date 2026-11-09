@@ -1,2 +1,1 @@
 """FastMCP integration."""
-

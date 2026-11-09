@@ -8,6 +8,7 @@ from hr_assistant.application.audit import record_event
 from hr_assistant.application.errors import NotFoundError
 from hr_assistant.application.ports import ResumeVectorStore, UnitOfWorkProvider
 from hr_assistant.core.config import Settings
+from hr_assistant.domain.enums import CandidateStatus
 from hr_assistant.infrastructure.db.models import CandidateRecord, ResumeDocumentRecord
 from hr_assistant.infrastructure.document.pdf_extractor import PdfTextExtractor
 from hr_assistant.infrastructure.document.text_chunker import ResumeTextChunker
@@ -130,9 +131,9 @@ class CandidateService:
                 raise NotFoundError(f"Candidate {candidate_id} was not found.")
             return await self._to_output(uow, candidate)
 
-    async def list(self, limit: int = 100) -> list[CandidateOut]:
+    async def list_candidates(self, limit: int = 100) -> list[CandidateOut]:
         async with self.uow_provider() as uow:
-            records = await uow.candidates.list(limit)
+            records = await uow.candidates.list_all(limit)
             return [await self._to_output(uow, record) for record in records]
 
     async def history(self, candidate_id: str) -> list[AuditEventOut]:
@@ -151,7 +152,7 @@ class CandidateService:
             full_name=candidate.full_name,
             email=candidate.email,
             phone=candidate.phone,
-            status=candidate.status,
+            status=CandidateStatus(candidate.status),
             created_at=candidate.created_at,
             updated_at=candidate.updated_at,
             sources=[

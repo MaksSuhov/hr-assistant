@@ -52,9 +52,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             from eval.live_retrieval import fetch_live_retrieval
 
             records = asyncio.run(
-                fetch_live_retrieval(
-                    records, args.base_url, args.limit, args.concurrency
-                )
+                fetch_live_retrieval(records, args.base_url, args.limit, args.concurrency)
             )
             report = evaluate_retrieval(records)
             report["run_mode"] = "live_api"

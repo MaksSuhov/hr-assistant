@@ -12,4 +12,3 @@ async def health(request: Request) -> dict:
         "qdrant_url": container.settings.qdrant_url,
         "langfuse_configured": container.settings.langfuse_configured,
     }
-

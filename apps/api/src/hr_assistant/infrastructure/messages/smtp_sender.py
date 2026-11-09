@@ -20,6 +20,8 @@ class SmtpMessageSender:
         await asyncio.to_thread(self._send_sync, recipient, subject, body)
 
     def _send_sync(self, recipient: str, subject: str, body: str) -> None:
+        if self.settings.smtp_host is None or self.settings.smtp_from is None:
+            raise RuntimeError("SMTP is not configured.")
         message = EmailMessage()
         message["From"] = self.settings.smtp_from
         message["To"] = recipient
@@ -27,9 +29,7 @@ class SmtpMessageSender:
         message.set_content(body)
 
         password = (
-            self.settings.smtp_password.get_secret_value()
-            if self.settings.smtp_password
-            else None
+            self.settings.smtp_password.get_secret_value() if self.settings.smtp_password else None
         )
         username = self.settings.smtp_username
         timeout_seconds = 20
@@ -60,4 +60,3 @@ class SmtpMessageSender:
     def _authenticate(client, username: str | None, password: str | None) -> None:
         if username:
             client.login(username, password or "")
-

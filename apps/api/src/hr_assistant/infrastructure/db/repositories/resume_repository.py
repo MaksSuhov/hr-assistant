@@ -31,7 +31,8 @@ class ResumeRepository:
 
     async def list_all(self, limit: int = 500) -> list[ResumeDocumentRecord]:
         result = await self.session.scalars(
-            select(ResumeDocumentRecord).order_by(ResumeDocumentRecord.uploaded_at.desc()).limit(limit)
+            select(ResumeDocumentRecord)
+            .order_by(ResumeDocumentRecord.uploaded_at.desc())
+            .limit(limit)
         )
         return list(result)
-

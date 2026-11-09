@@ -48,4 +48,3 @@ class CompareCandidatesRequest(BaseModel):
 class CompareCandidatesResponse(BaseModel):
     vacancy_id: str
     candidates: list[MatchAnalysis]
-

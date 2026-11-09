@@ -22,4 +22,3 @@ class AuditRepository:
             .order_by(AuditEventRecord.created_at.desc())
         )
         return list(result)
-

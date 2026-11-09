@@ -15,7 +15,7 @@ router = APIRouter(dependencies=[Depends(authenticated_user)])
 
 @router.get("", response_model=list[CandidateOut])
 async def list_candidates(request: Request, limit: int = Query(default=100, ge=1, le=100)):
-    return await get_container(request).candidates.list(limit)
+    return await get_container(request).candidates.list_candidates(limit)
 
 
 @router.get("/{candidate_id}", response_model=CandidateOut)
