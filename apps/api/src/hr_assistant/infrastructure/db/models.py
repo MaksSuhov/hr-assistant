@@ -37,6 +37,10 @@ class RefreshTokenRecord(Base):
 
 class VacancyRecord(Base):
     __tablename__ = "vacancies"
+    # `updated_at` uses a server-side `onupdate`; eager defaults fetch it in the
+    # same statement. Without this, reading the record after UPDATE triggers a
+    # lazy load outside the async greenlet and raises MissingGreenlet.
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -63,6 +67,7 @@ class RequirementRecord(Base):
 
 class CandidateRecord(Base):
     __tablename__ = "candidates"
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     full_name: Mapped[str | None] = mapped_column(String(300))
