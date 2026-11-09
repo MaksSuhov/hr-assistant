@@ -1,8 +1,19 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_AUTH_SECRET = "change-this-secret-before-deploying-please"
+# Both the built-in default and the value suggested by .env.example are public.
+INSECURE_AUTH_SECRETS = frozenset(
+    {DEFAULT_AUTH_SECRET, "replace-with-a-random-secret-at-least-32-characters"}
+)
+MIN_AUTH_SECRET_LENGTH = 32
+# Hosts that reach the API over plain HTTP on a developer machine. Any other
+# host is treated as a real deployment, where session cookies must be Secure.
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "testserver"})
 
 
 class Settings(BaseSettings):
@@ -10,10 +21,14 @@ class Settings(BaseSettings):
 
     app_name: str = "HR Assistant API"
     api_v1_prefix: str = "/api/v1"
-    auth_secret_key: SecretStr = SecretStr("change-this-secret-before-deploying-please")
+    # Production is the default so an unconfigured deployment fails loudly
+    # instead of silently signing tokens with the public placeholder secret.
+    app_env: Literal["development", "dev", "local", "test", "production"] = "production"
+    auth_secret_key: SecretStr = SecretStr(DEFAULT_AUTH_SECRET)
     access_token_minutes: int = Field(default=15, ge=1, le=1440)
     refresh_token_days: int = Field(default=30, ge=1, le=365)
-    auth_cookie_secure: bool = False
+    # None means "auto": Secure everywhere except loopback hosts.
+    auth_cookie_secure: bool | None = None
     oauth_google_client_id: str | None = None
     oauth_google_client_secret: SecretStr | None = None
     oauth_google_redirect_uri: str | None = None
@@ -23,6 +38,19 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/hr_assistant.db"
     storage_dir: Path = Path("./storage/resumes")
     max_upload_bytes: int = Field(default=15 * 1024 * 1024, ge=1024)
+
+    # Per-IP sliding-window limits. Counters are in-memory and therefore
+    # per-worker; use a single uvicorn worker or replace them with Redis when
+    # scaling horizontally.
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = Field(default=120, ge=1)
+    rate_limit_login_per_minute: int = Field(default=10, ge=1)
+    rate_limit_register_per_hour: int = Field(default=10, ge=1)
+    rate_limit_refresh_per_minute: int = Field(default=60, ge=1)
+    rate_limit_public_upload_per_hour: int = Field(default=5, ge=1)
+    rate_limit_chat_per_minute: int = Field(default=30, ge=1)
+    # Enable only behind a reverse proxy that overwrites X-Forwarded-For.
+    rate_limit_trust_proxy: bool = False
 
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
@@ -69,6 +97,34 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_from)
+
+    @model_validator(mode="after")
+    def _reject_unsafe_secret_outside_development(self) -> "Settings":
+        if self.app_env == "production":
+            secret = self.auth_secret_key.get_secret_value()
+            if secret in INSECURE_AUTH_SECRETS:
+                raise ValueError(
+                    "AUTH_SECRET_KEY is still a public default or placeholder. "
+                    "Set a random secret of at least 32 characters, "
+                    "or set APP_ENV=development for local work."
+                )
+            if len(secret) < MIN_AUTH_SECRET_LENGTH:
+                raise ValueError(
+                    f"AUTH_SECRET_KEY must be at least {MIN_AUTH_SECRET_LENGTH} characters "
+                    "outside development."
+                )
+        return self
+
+    def cookie_secure(self, host: str | None) -> bool:
+        """Return whether session cookies should carry the Secure flag.
+
+        An explicit AUTH_COOKIE_SECURE wins. Otherwise cookies are Secure for
+        every host except loopback, so a deployment that forgets the setting is
+        still protected.
+        """
+        if self.auth_cookie_secure is not None:
+            return self.auth_cookie_secure
+        return (host or "").lower() not in LOCAL_HOSTS
 
 
 @lru_cache

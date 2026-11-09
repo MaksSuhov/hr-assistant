@@ -1,5 +1,5 @@
 import secrets
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import httpx
@@ -26,9 +26,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def _set_session(response: Response, container, user: UserRecord, refresh_token: str) -> None:
+def _set_session(
+    response: Response,
+    container,
+    user: UserRecord,
+    refresh_token: str,
+    *,
+    secure: bool,
+) -> None:
     settings = container.settings
-    common = {"secure": settings.auth_cookie_secure, "samesite": "lax", "path": "/"}
+    common: dict[str, Any] = {"secure": secure, "samesite": "lax", "path": "/"}
     response.set_cookie(
         "access_token",
         container.auth.access_token(user),
@@ -61,7 +68,13 @@ def _clear_session(response: Response, secure: bool) -> None:
 async def register(data: RegisterRequest, request: Request, response: Response):
     container = get_container(request)
     user = await container.auth.register(data.email, data.password, data.full_name)
-    _set_session(response, container, user, await container.auth.issue_refresh(user))
+    _set_session(
+        response,
+        container,
+        user,
+        await container.auth.issue_refresh(user),
+        secure=container.settings.cookie_secure(request.url.hostname),
+    )
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -69,7 +82,13 @@ async def register(data: RegisterRequest, request: Request, response: Response):
 async def login(data: LoginRequest, request: Request, response: Response):
     container = get_container(request)
     user = await container.auth.authenticate(data.email, data.password)
-    _set_session(response, container, user, await container.auth.issue_refresh(user))
+    _set_session(
+        response,
+        container,
+        user,
+        await container.auth.issue_refresh(user),
+        secure=container.settings.cookie_secure(request.url.hostname),
+    )
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -83,7 +102,13 @@ async def refresh(request: Request, response: Response):
     if not csrf_cookie or csrf_cookie != request.headers.get("x-csrf-token", ""):
         raise HTTPException(403, "CSRF token is missing or invalid.")
     user, next_token = await container.auth.rotate_refresh(raw)
-    _set_session(response, container, user, next_token)
+    _set_session(
+        response,
+        container,
+        user,
+        next_token,
+        secure=container.settings.cookie_secure(request.url.hostname),
+    )
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -94,7 +119,7 @@ async def logout(request: Request, response: Response):
     if csrf_cookie and csrf_cookie != request.headers.get("x-csrf-token", ""):
         raise HTTPException(403, "CSRF token is invalid.")
     await container.auth.revoke_refresh(request.cookies.get("refresh_token"))
-    _clear_session(response, container.settings.auth_cookie_secure)
+    _clear_session(response, container.settings.cookie_secure(request.url.hostname))
     response.status_code = 204
     return response
 
@@ -141,7 +166,7 @@ async def google_login(request: Request):
         "oauth_state",
         state,
         httponly=True,
-        secure=settings.auth_cookie_secure,
+        secure=settings.cookie_secure(request.url.hostname),
         samesite="lax",
         max_age=600,
         path="/",
@@ -212,5 +237,11 @@ async def google_callback(request: Request, code: str, state: str):
         raise HTTPException(403, "Account is disabled.")
     response = RedirectResponse(settings.oauth_frontend_url)
     response.delete_cookie("oauth_state", path="/")
-    _set_session(response, container, user, await container.auth.issue_refresh(user))
+    _set_session(
+        response,
+        container,
+        user,
+        await container.auth.issue_refresh(user),
+        secure=settings.cookie_secure(request.url.hostname),
+    )
     return response

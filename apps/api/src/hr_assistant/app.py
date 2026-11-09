@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastmcp.utilities.lifespan import combine_lifespans
 
+from hr_assistant.api.rate_limit import install_rate_limiting
 from hr_assistant.api.router import api_router
 from hr_assistant.application.errors import ApplicationError
 from hr_assistant.container import ServiceContainer
@@ -49,6 +50,7 @@ def create_app(
     app.state.container = resolved_container
     app.include_router(api_router, prefix=resolved_settings.api_v1_prefix)
     app.mount("/mcp", mcp_http_app, name="mcp")
+    install_rate_limiting(app, resolved_settings)
 
     @app.middleware("http")
     async def protect_mcp(request: Request, call_next):
