@@ -1,3 +1,5 @@
+from typing import Any
+
 from hr_assistant.application.approval_service import ApprovalService
 from hr_assistant.application.auth import AuthService
 from hr_assistant.application.candidate_service import CandidateService
@@ -17,16 +19,30 @@ from hr_assistant.infrastructure.vector.qdrant_store import QdrantResumeStore
 
 
 class ServiceContainer:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        llm: Any | None = None,
+        vector_store: Any | None = None,
+        tracer: Any | None = None,
+        message_sender: Any | None = None,
+        extractor: Any | None = None,
+        chunker: Any | None = None,
+    ) -> None:
         self.settings = settings
         self.database = Database(settings)
         self.auth = AuthService(self.database, settings)
-        self.llm = OpenAIProvider(settings)
-        self.vector_store = QdrantResumeStore(settings, self.llm)
-        self.tracer = LangfuseTracer(settings)
-        self.message_sender = SmtpMessageSender(settings)
-        self.extractor = PdfTextExtractor()
-        self.chunker = ResumeTextChunker()
+        self.llm = llm if llm is not None else OpenAIProvider(settings)
+        self.vector_store = (
+            vector_store if vector_store is not None else QdrantResumeStore(settings, self.llm)
+        )
+        self.tracer = tracer if tracer is not None else LangfuseTracer(settings)
+        self.message_sender = (
+            message_sender if message_sender is not None else SmtpMessageSender(settings)
+        )
+        self.extractor = extractor if extractor is not None else PdfTextExtractor()
+        self.chunker = chunker if chunker is not None else ResumeTextChunker()
 
         uow_provider = self.database.unit_of_work
         self.vacancies = VacancyService(uow_provider)
