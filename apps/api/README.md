@@ -9,7 +9,7 @@ Backend первой версии HR-помощника: вакансии, ре�
 - **FastAPI + Pydantic + asyncio + Uvicorn** — REST API и SSE чат.
 - **SQLite + SQLAlchemy async** — вакансии, требования, кандидаты, документы, история, диалоги, подтверждения и очередь сообщений.
 - **Qdrant** — текстовые фрагменты резюме; dense-вектора OpenAI + BM25 FastEmbed объединяются Reciprocal Rank Fusion (RRF).
-- **HyDE + reranking** — перед поиском `gpt-4.1-mini` формирует гипотетический фрагмент резюме, а после hybrid retrieval оценивает до 30 фрагментов по исходному запросу и возвращает самые релевантные.
+- **HyDE + reranking** — перед поиском модель реранкинга (`SEARCH_ENHANCEMENT_MODEL`) формирует гипотетический фрагмент резюме, а после hybrid retrieval оценивает до 30 фрагментов по исходному запросу и возвращает самые релевантные.
 - **LangChain Text Splitters** — разбиение извлечённого текста на фрагменты.
 - **OpenAI SDK** — embeddings, чат, tool calling и анализ подтверждений по требованиям; работает через любой OpenAI-совместимый шлюз, например RouterAI.
 - **Langfuse** — трассировка чата при наличии ключей.
@@ -43,15 +43,16 @@ docker compose up --build
 ```dotenv
 OPENAI_API_KEY=<ключ RouterAI>
 OPENAI_BASE_URL=https://routerai.ru/api/v1
-OPENAI_CHAT_MODEL=openai/gpt-4.1-mini
+OPENAI_CHAT_MODEL=qwen/qwen3.7-flash
+SEARCH_ENHANCEMENT_MODEL=qwen/qwen3.7-flash
 OPENAI_EMBEDDING_MODEL=openai/text-embedding-3-small
 ```
 
 Идентификаторы моделей у шлюза идут с префиксом провайдера (`openai/…`, `anthropic/…`, `google/…`), актуальный список — на [routerai.ru/models](https://routerai.ru/models). Модель чата должна поддерживать `tools` и `response_format`, иначе чат и анализ требований деградируют. `OPENAI_EMBEDDING_DIMENSIONS` должен совпадать с размерностью выбранной модели и с коллекцией Qdrant: при смене модели на другую размерность коллекцию нужно пересоздать.
 
-Модели-«рассуждалки» (например `qwen/qwen3.7-flash`) по умолчанию генерируют скрытый блок рассуждений, поэтому первый видимый токен может прийти через 10–30 с. Чат и анализ требований по умолчанию отправляют `reasoning: {"enabled": false}` в `extra_body` запроса и отвечают в разы быстрее; вернуть режим рассуждений можно через `CHAT_REASONING_ENABLED=true`. Шлюз может игнорировать управление степенью (`reasoning.effort`), поэтому используется только бинарный переключатель.
+Модели-«рассуждалки» (например базовая по умолчанию `qwen/qwen3.7-flash`) по умолчанию генерируют скрытый блок рассуждений, поэтому первый видимый токен может прийти через 10–30 с. Чат и анализ требований по умолчанию отправляют `reasoning: {"enabled": false}` в `extra_body` запроса и отвечают в разы быстрее; вернуть режим рассуждений можно через `CHAT_REASONING_ENABLED=true`. Шлюз может игнорировать управление степенью (`reasoning.effort`), поэтому используется только бинарный переключатель.
 
-Поиск резюме использует HyDE и реранкинг через `SEARCH_ENHANCEMENT_MODEL` (по умолчанию `gpt-4.1-mini`). HyDE добавляет к запросу гипотетическое описание релевантного опыта; оно не считается фактом о кандидате. Реранкер сравнивает найденные фрагменты с исходным запросом. Этапы можно независимо отключить через `HYDE_ENABLED=false` и `RERANKING_ENABLED=false`; глубина пула задаётся `RERANKING_CANDIDATE_POOL` (по умолчанию 30). Если LLM недоступна или этап завершается ошибкой, поиск использует доступный hybrid/текстовый fallback.
+Поиск резюме использует HyDE и реранкинг через `SEARCH_ENHANCEMENT_MODEL` (по умолчанию `qwen/qwen3.7-flash`; в `.env` его удобно держать равным `OPENAI_CHAT_MODEL`). HyDE добавляет к запросу гипотетическое описание релевантного опыта; оно не считается фактом о кандидате. Реранкер сравнивает найденные фрагменты с исходным запросом. Этапы можно независимо отключить через `HYDE_ENABLED=false` и `RERANKING_ENABLED=false`; глубина пула задаётся `RERANKING_CANDIDATE_POOL` (по умолчанию 30). Если LLM недоступна или этап завершается ошибкой, поиск использует доступный hybrid/текстовый fallback.
 
 Qdrant поднимается сервисом `qdrant` из `docker-compose.yml`; `QDRANT_URL` в `.env` указывает на него, а коллекция `QDRANT_COLLECTION` создаётся при старте приложения.
 
@@ -85,7 +86,14 @@ Qdrant поднимается сервисом `qdrant` из `docker-compose.yml
 | `GET` | `/auth/oauth/google` | Начать вход Google OAuth 2.0 (если настроен) |
 | `POST` | `/resumes/public` | Публичная загрузка резюме из портала кандидата |
 
-Access и refresh токены хранятся в `HttpOnly` cookies. Настройте `AUTH_SECRET_KEY`, а в production включите `AUTH_COOKIE_SECURE=true`. Для Google укажите OAuth client ID/secret и callback URI из `.env.example`. Первый аккаунт получает роль администратора; администратор может создать учётные записи рекрутеров через `POST /auth/users`.
+Access и refresh токены хранятся в `HttpOnly` cookies. Для Google укажите OAuth client ID/secret и callback URI из `.env.example`. Первый аккаунт получает роль администратора; администратор может создать учётные записи рекрутеров через `POST /auth/users`.
+
+## Безопасность
+
+- **Секрет подписи.** `APP_ENV=production` (значение по умолчанию) не даёт приложению стартовать, если `AUTH_SECRET_KEY` равен публичному значению из `.env.example` или короче 32 символов. Для локальной работы укажите `APP_ENV=development`, но и там лучше сгенерировать настоящий секрет: `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+- **Secure cookies.** `AUTH_COOKIE_SECURE` по умолчанию не задан и включает `Secure` для всех хостов, кроме `localhost`, `127.0.0.1` и `::1`. Явное `true`/`false` переопределяет это поведение (например, `false` для LAN-машины без TLS).
+- **Rate limiting.** Лимиты по IP включаются через `RATE_LIMIT_ENABLED` и отдельно настраиваются для входа, регистрации, refresh, публичной загрузки резюме и чата (`RATE_LIMIT_*`). При превышении API отвечает `429` с заголовком `Retry-After`; `/health` не ограничивается. Счётчики хранятся в памяти процесса: запускайте один воркер или перенесите их в Redis. За обратным прокси включите `RATE_LIMIT_TRUST_PROXY=true`, только если прокси перезаписывает `X-Forwarded-For`.
+- **Prompt injection.** Текст резюме — недоверенные данные. При передаче модели он оборачивается в `<resume_text>…</resume_text>`, поддельные теги внутри текста нейтрализуются, а системный промпт запрещает выполнять инструкции из этого блока.
 
 Смена статуса происходит только при вызове `approve`. Черновик сообщения ничего не отправляет. После подтверждения сообщение отправится через SMTP, если заданы `SMTP_HOST` и `SMTP_FROM`; иначе оно останется в SQLite outbox со статусом `queued`. Статус и ошибки доставки доступны через `/approvals/outbox`.
 
@@ -148,6 +156,21 @@ curl -N -X POST http://localhost:8000/api/v1/chat/stream \
 ```
 
 События SSE: `conversation` (ID диалога), `token` (часть ответа), `done` (ID сообщения) и `error`. Для продолжения передайте полученный `conversation_id` в следующем запросе. Группа `performance` по заголовку `X-Eval-Metrics: true` дополнительно получает диагностическое событие `eval_metrics`.
+
+## Тесты, линтеры и типы
+
+```bash
+python -m pip install -e ".[dev]"
+
+ruff check .
+ruff format --check .
+mypy
+pytest --cov=hr_assistant --cov=eval --cov-report=term-missing
+```
+
+Тесты не обращаются к OpenAI, Qdrant и SMTP: LLM, векторное хранилище, трейсер и отправитель сообщений подменяются детерминированными фейками, а SQLite создаётся во временном каталоге. Покрыты вход и CSRF, вакансии, загрузка PDF и индексация, поиск с лексическим fallback, подтверждения и outbox, SSE-чат с tool calls, HyDE/реранкинг и метрики `eval`. Prerequisite: Python 3.12 (как в Docker-образе); MyPy проверяет `src` и `eval`.
+
+Из корня проекта те же шаги доступны через `make check`. GitHub Actions (`.github/workflows/ci.yml`) запускает `ruff`, `mypy`, `pytest` с покрытием, сборку фронтенда и Docker-образов.
 
 ## Оценка качества (`eval`)
 

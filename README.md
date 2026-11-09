@@ -1,5 +1,7 @@
 # Линия — HR assistant monorepo
 
+[![CI](https://github.com/MaksSuhov/hr-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/MaksSuhov/hr-assistant/actions/workflows/ci.yml)
+
 Минималистичное рабочее пространство для найма: API на FastAPI, веб-интерфейс на React и Vite, загрузка резюме, поиск по документам и чат с ассистентом.
 
 ## Структура
@@ -21,6 +23,8 @@ apps/
    ```
 
    Откройте `.env` в редакторе и вставьте ключ провайдера в `OPENAI_API_KEY=...`. Без ключа сайт и API запустятся, но чат и индексация резюме работать не будут.
+
+   Шаблон включает `APP_ENV=development` и заглушку `AUTH_SECRET_KEY`. Для боевого запуска поставьте `APP_ENV=production` и замените секрет случайным значением не короче 32 символов: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Иначе API откажется стартовать.
 
 2. В той же папке запустите сборку и сервисы:
 
@@ -61,6 +65,18 @@ npm run dev
 ```
 
 Vite проксирует `/api` на `http://localhost:8000`. Для сборки используйте `npm run build`.
+
+## Проверка качества
+
+В репозитории настроены `ruff`, `mypy` и `pytest`. Из корня проекта:
+
+```bash
+make install   # pip install -e "apps/api[dev]"
+make check     # ruff, форматирование, mypy и тесты с покрытием
+make web-build # npm ci + tsc + vite build
+```
+
+Тесты backend не обращаются к OpenAI, Qdrant и SMTP: внешние сервисы заменены фейками, SQLite создаётся во временном каталоге, поэтому прогон занимает секунды и не требует ключей. Те же проверки выполняет GitHub Actions на Python 3.12 (`.github/workflows/ci.yml`), дополнительно собирая фронтенд и Docker-образы.
 
 ## Как устроен приём откликов
 
