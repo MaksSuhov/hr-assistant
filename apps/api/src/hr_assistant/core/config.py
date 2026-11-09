@@ -62,8 +62,8 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr | None = None
     openai_base_url: str | None = None
-    openai_chat_model: str = "gpt-4.1-mini"
-    search_enhancement_model: str = "gpt-4.1-mini"
+    openai_chat_model: str = "qwen/qwen3.7-flash"
+    search_enhancement_model: str = "qwen/qwen3.7-flash"
     hyde_enabled: bool = True
     reranking_enabled: bool = True
     reranking_candidate_pool: int = Field(default=30, ge=5, le=100)
