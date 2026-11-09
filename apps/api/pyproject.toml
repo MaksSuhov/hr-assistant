@@ -28,6 +28,15 @@ dependencies = [
     "PyJWT[crypto]>=2.10,<3.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<10.0",
+    "pytest-asyncio>=0.24,<2.0",
+    "pytest-cov>=6.0,<8.0",
+    "ruff>=0.11,<1.0",
+    "mypy>=1.15,<2.0",
+]
+
 [project.scripts]
 hr-eval = "eval.cli:main"
 
@@ -40,3 +49,39 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["hr_assistant", "eval"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers --strict-config"
+pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["hr_assistant", "eval"]
+branch = true
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+files = ["src", "eval"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+ignore_missing_imports = true

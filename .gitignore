@@ -4,6 +4,12 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 .pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+reports/
+*.egg-info/
 data/
 storage/resumes/*
 !storage/resumes/.gitkeep
