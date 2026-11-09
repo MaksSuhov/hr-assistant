@@ -5,6 +5,7 @@ from typing import Any
 
 from hr_assistant.application.ports import ResumeVectorStore, UnitOfWorkProvider
 from hr_assistant.core.config import Settings
+from hr_assistant.core.prompt_safety import RESUME_DATA_RULE, wrap_resume_text
 from hr_assistant.infrastructure.llm.openai_provider import OpenAIProvider
 from hr_assistant.schemas.matching import CandidateSearchHit
 
@@ -27,17 +28,24 @@ class SearchService:
     async def search_raw(
         self, query: str, limit: int = 10, candidate_ids: list[str] | None = None
     ) -> list[dict[str, Any]]:
+        settings = self.settings
+        enhancements_enabled = self._enhancements_enabled
         search_query = query
-        if self._enhancements_enabled and self.settings.hyde_enabled:
+        if enhancements_enabled and settings is not None and settings.hyde_enabled:
             try:
                 hypothetical_document = await self._hypothetical_document(query)
                 search_query = f"{query}\n{hypothetical_document}"
             except Exception:
                 logger.exception("HyDE query generation failed; using the original query")
         try:
-            retrieval_limit = max(limit, self.settings.reranking_candidate_pool) if (
-                self._enhancements_enabled and self.settings.reranking_enabled
-            ) else limit
+            reranking_enabled = bool(
+                enhancements_enabled and settings is not None and settings.reranking_enabled
+            )
+            retrieval_limit = (
+                max(limit, settings.reranking_candidate_pool)
+                if reranking_enabled and settings is not None
+                else limit
+            )
             hits = await self.vector_store.search(search_query, retrieval_limit, candidate_ids)
             if hits:
                 return await self._rerank(query, hits, limit)
@@ -50,7 +58,9 @@ class SearchService:
         return bool(self.llm and self.llm.configured and self.settings)
 
     async def _hypothetical_document(self, query: str) -> str:
-        response = await self.llm.client.chat.completions.create(
+        if self.llm is None or self.settings is None:
+            return query
+        response = await self.llm.require_client().chat.completions.create(
             model=self.settings.search_enhancement_model,
             temperature=0.2,
             max_tokens=220,
@@ -74,30 +84,34 @@ class SearchService:
     async def _rerank(
         self, query: str, hits: list[dict[str, Any]], limit: int
     ) -> list[dict[str, Any]]:
+        llm = self.llm
+        settings = self.settings
         if not (
-            self._enhancements_enabled
-            and self.settings.reranking_enabled
+            llm is not None
+            and llm.configured
+            and settings is not None
+            and settings.reranking_enabled
             and len(hits) > 1
         ):
             return hits[:limit]
         candidates = [
-            {"index": index, "text": str(hit.get("text", ""))[:1800]}
+            {"index": index, "text": wrap_resume_text(str(hit.get("text", ""))[:1800])}
             for index, hit in enumerate(hits)
         ]
         try:
-            response = await self.llm.client.chat.completions.create(
-                model=self.settings.search_enhancement_model,
+            response = await llm.require_client().chat.completions.create(
+                model=settings.search_enhancement_model,
                 temperature=0,
                 max_tokens=min(1000, 30 + len(hits) * 12),
                 response_format={"type": "json_object"},
-                extra_body=self.llm.chat_extra_body,
+                extra_body=llm.chat_extra_body,
                 messages=[
                     {
                         "role": "system",
                         "content": (
                             "Оцени релевантность каждого фрагмента резюме поисковому запросу. "
                             "Учитывай соответствие опыта и навыков, а не только общие слова. "
-                            "Не делай выводов о найме. Верни JSON вида "
+                            "Не делай выводов о найме. " + RESUME_DATA_RULE + " Верни JSON вида "
                             '{"ranking":[{"index":0,"score":0}]}. score — целое число от 0 до 100. '
                             "Включи каждый переданный индекс ровно один раз."
                         ),

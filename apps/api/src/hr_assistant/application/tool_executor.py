@@ -4,6 +4,7 @@ from typing import Any
 from hr_assistant.application.candidate_service import CandidateService
 from hr_assistant.application.matching_service import MatchingService
 from hr_assistant.application.search_service import SearchService
+from hr_assistant.core.prompt_safety import wrap_resume_text
 
 
 class ToolExecutor:
@@ -21,10 +22,12 @@ class ToolExecutor:
 
     async def execute(self, name: str, arguments: str) -> str:
         args: dict[str, Any] = json.loads(arguments or "{}")
+        result: Any
+        payload: Any
         if name == "search_candidates":
             limit = max(1, min(int(args.get("limit", 5)), 10))
             result = await self.search.search(args["query"], limit)
-            payload = [item.model_dump(mode="json") for item in result]
+            payload = [_with_wrapped_snippet(item.model_dump(mode="json")) for item in result]
         elif name == "get_candidate_profile":
             result = await self.candidates.get(args["candidate_id"])
             payload = result.model_dump(mode="json")
@@ -35,3 +38,14 @@ class ToolExecutor:
             payload = {"error": f"Unknown tool: {name}"}
         return json.dumps(payload, ensure_ascii=False)
 
+
+def _with_wrapped_snippet(hit: dict[str, Any]) -> dict[str, Any]:
+    """Mark resume excerpts as data before the model reads a tool result."""
+    snippet = hit.get("snippet")
+    if isinstance(snippet, str):
+        hit["snippet"] = wrap_resume_text(
+            snippet,
+            source=str(hit.get("source_filename", "")),
+            candidate_id=str(hit.get("candidate_id", "")),
+        )
+    return hit

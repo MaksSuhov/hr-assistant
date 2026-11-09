@@ -2,13 +2,14 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from hr_assistant.application.errors import NotFoundError
 from hr_assistant.application.ports import ResumeSearch, UnitOfWorkProvider
 from hr_assistant.application.tool_executor import ToolExecutor
 from hr_assistant.core.config import Settings
+from hr_assistant.core.prompt_safety import RESUME_DATA_RULE, wrap_resume_text
 from hr_assistant.infrastructure.db.models import ChatMessageRecord, ChatSessionRecord
 from hr_assistant.infrastructure.llm.openai_provider import OpenAIProvider
 from hr_assistant.infrastructure.observability.langfuse_tracer import LangfuseTracer
@@ -34,10 +35,11 @@ def _usage_details(usage: Any) -> dict[str, int] | None:
 class ChatService:
     SYSTEM_PROMPT = (
         "Ты — помощник HR. Отвечай по-русски, кратко и конкретно. "
-        "Опирайся на найденные фрагменты резюме и называй источник. "
+        "Опирайся на найденные фрагменты резюме и называй источник. " + RESUME_DATA_RULE + " "
         "Не утверждай, что открыл ссылку, сайт или вложение, если их содержимое не передано тебе. "
-        "Если пользователь прислал только внешний URL, не связывай его с фрагментами другого кандидата, "
-        "найденными по совпадению слов. Для ссылок hh.ru и Telegram попроси загрузить PDF "
+        "Если пользователь прислал только внешний URL, не связывай его с фрагментами "
+        "другого кандидата, найденными по совпадению слов. "
+        "Для ссылок hh.ru и Telegram попроси загрузить PDF "
         "или вставить текст профиля, если содержимое не передано в контексте. "
         "Если данных не хватает, прямо обозначай это и предлагай вопрос для интервью. "
         "Не принимай решение о найме, не меняй статусы и не отправляй сообщения. "
@@ -72,6 +74,7 @@ class ChatService:
         include_eval_metrics: bool = False,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         request_started = time.perf_counter()
+        client = self.llm.require_client()
         session_id, history = await self._save_user_message(message, conversation_id, actor_id)
         yield "conversation", {"conversation_id": session_id}
 
@@ -104,12 +107,18 @@ class ChatService:
                             for hit in retrieved
                         ]
                     )
-            rag_context = "\n\n".join(
-                f"[{hit.get('source_filename', 'резюме')} | candidate_id={hit.get('candidate_id')}] "
-                f"{str(hit.get('text', ''))[:1000]}"
-                for hit in retrieved
-            ) or "Подходящие фрагменты резюме не найдены."
-            messages: list[dict[str, Any]] = [
+            rag_context = (
+                "\n\n".join(
+                    wrap_resume_text(
+                        str(hit.get("text", ""))[:1000],
+                        source=str(hit.get("source_filename", "резюме")),
+                        candidate_id=str(hit.get("candidate_id", "")),
+                    )
+                    for hit in retrieved
+                )
+                or "Подходящие фрагменты резюме не найдены."
+            )
+            messages: list[Any] = [
                 {"role": "system", "content": self.SYSTEM_PROMPT},
                 {
                     "role": "system",
@@ -122,7 +131,7 @@ class ChatService:
             with self.tracer.generation(
                 "chat-completion", model=self.settings.openai_chat_model, input_data=messages
             ) as generation:
-                first_stream = await self.llm.client.chat.completions.create(
+                first_stream = await client.chat.completions.create(
                     model=self.settings.openai_chat_model,
                     messages=messages,
                     tools=HR_ASSISTANT_TOOLS,
@@ -139,7 +148,7 @@ class ChatService:
                     delta = chunk.choices[0].delta
                     if ttft_ms is None and (delta.content or delta.tool_calls):
                         ttft_ms = (time.perf_counter() - request_started) * 1000
-                        completion_started_at = datetime.now(timezone.utc)
+                        completion_started_at = datetime.now(UTC)
                     if delta.content:
                         if ttfrt_ms is None:
                             ttfrt_ms = (time.perf_counter() - request_started) * 1000
@@ -148,7 +157,11 @@ class ChatService:
                     for tool_delta in delta.tool_calls or []:
                         call = tool_calls.setdefault(
                             tool_delta.index,
-                            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
                         )
                         if tool_delta.id:
                             call["id"] = tool_delta.id
@@ -201,7 +214,7 @@ class ChatService:
                     model=self.settings.openai_chat_model,
                     input_data=messages,
                 ) as generation:
-                    final_stream = await self.llm.client.chat.completions.create(
+                    final_stream = await client.chat.completions.create(
                         model=self.settings.openai_chat_model,
                         messages=messages,
                         tool_choice="none",
@@ -219,7 +232,7 @@ class ChatService:
                             if ttfrt_ms is None:
                                 ttfrt_ms = (time.perf_counter() - request_started) * 1000
                             if final_completion_started_at is None:
-                                final_completion_started_at = datetime.now(timezone.utc)
+                                final_completion_started_at = datetime.now(UTC)
                             answer_parts.append(text)
                             yield "token", {"text": text}
                     if generation:
@@ -234,11 +247,14 @@ class ChatService:
                 observation.update(output=answer)
         message_id = await self._save_assistant_message(session_id, answer)
         if include_eval_metrics:
-            yield "eval_metrics", {
-                "ttft_ms": round(ttft_ms, 3) if ttft_ms is not None else None,
-                "ttfrt_ms": round(ttfrt_ms, 3) if ttfrt_ms is not None else None,
-                "latency_ms": round((time.perf_counter() - request_started) * 1000, 3),
-            }
+            yield (
+                "eval_metrics",
+                {
+                    "ttft_ms": round(ttft_ms, 3) if ttft_ms is not None else None,
+                    "ttfrt_ms": round(ttfrt_ms, 3) if ttfrt_ms is not None else None,
+                    "latency_ms": round((time.perf_counter() - request_started) * 1000, 3),
+                },
+            )
         yield "done", {"conversation_id": session_id, "message_id": message_id}
 
     async def _save_user_message(

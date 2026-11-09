@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+from typing import Any
 
 from hr_assistant.application.errors import NotFoundError
 from hr_assistant.application.ports import ResumeSearch, UnitOfWorkProvider
 from hr_assistant.core.config import Settings
+from hr_assistant.core.prompt_safety import RESUME_DATA_RULE, wrap_resume_text
 from hr_assistant.domain.enums import EvidenceStatus
 from hr_assistant.infrastructure.llm.openai_provider import OpenAIProvider
 from hr_assistant.schemas.matching import (
@@ -69,12 +71,12 @@ class MatchingService:
                     vacancy_id, candidate_id, requirements, evidence_by_requirement
                 )
             except Exception:
-                logger.exception("LLM requirement analysis failed; returning evidence-only analysis")
+                logger.exception(
+                    "LLM requirement analysis failed; returning evidence-only analysis"
+                )
         return self._evidence_only(vacancy_id, candidate_id, requirements, evidence_by_requirement)
 
-    async def compare(
-        self, vacancy_id: str, candidate_ids: list[str]
-    ) -> CompareCandidatesResponse:
+    async def compare(self, vacancy_id: str, candidate_ids: list[str]) -> CompareCandidatesResponse:
         analyses = await asyncio.gather(
             *(self.match_candidate(vacancy_id, candidate_id) for candidate_id in candidate_ids)
         )
@@ -92,12 +94,16 @@ class MatchingService:
                     "is_must_have": requirement.is_must_have,
                     "weight": requirement.weight,
                     "evidence": [
-                        {"index": index, "text": item.text, "source": item.source_filename}
+                        {
+                            "index": index,
+                            "text": wrap_resume_text(item.text, source=item.source_filename),
+                            "source": item.source_filename,
+                        }
                         for index, item in enumerate(evidence_by_requirement[requirement.id])
                     ],
                 }
             )
-        response = await self.llm.client.chat.completions.create(
+        response = await self.llm.require_client().chat.completions.create(
             model=self.settings.openai_chat_model,
             temperature=0.1,
             response_format={"type": "json_object"},
@@ -106,12 +112,16 @@ class MatchingService:
                 {
                     "role": "system",
                     "content": (
-                        "Ты помогаешь HR сопоставить требования с резюме. Не делай выводов о найме. "
-                        "Используй только переданные фрагменты. Не считай отсутствие фрагмента "
-                        "доказательством отсутствия навыка. Верни JSON с ключами summary и requirements. "
+                        "Ты помогаешь HR сопоставить требования с резюме. "
+                        "Не делай выводов о найме. Используй только переданные фрагменты. "
+                        "Не считай отсутствие фрагмента доказательством отсутствия навыка. "
+                        + RESUME_DATA_RULE
+                        + " "
+                        "Верни JSON с ключами summary и requirements. "
                         "Для каждого требования верни requirement_id, status (supported, partial, "
-                        "unknown, not_found), evidence_indices и gap_or_question. Индексы выбирай "
-                        "только из переданных фрагментов. Если фрагменты не подтверждают требование, "
+                        "unknown, not_found), evidence_indices и gap_or_question. "
+                        "Индексы выбирай только из переданных фрагментов. "
+                        "Если фрагменты не подтверждают требование, "
                         "укажи unknown или not_found и сформулируй вопрос для интервью."
                     ),
                 },
@@ -145,12 +155,19 @@ class MatchingService:
         return MatchAnalysis(
             candidate_id=candidate_id,
             vacancy_id=vacancy_id,
-            summary=str(parsed.get("summary", "Сопоставление подготовлено по найденным фрагментам.")),
+            summary=str(
+                parsed.get("summary", "Сопоставление подготовлено по найденным фрагментам.")
+            ),
             requirement_evidence=requirement_evidence,
         )
 
     @staticmethod
-    def _evidence_only(vacancy_id, candidate_id, requirements, evidence_by_requirement):
+    def _evidence_only(
+        vacancy_id: str,
+        candidate_id: str,
+        requirements: list[Any],
+        evidence_by_requirement: dict[str, list[EvidenceSnippet]],
+    ) -> MatchAnalysis:
         items = []
         for requirement in requirements:
             evidence = evidence_by_requirement[requirement.id]
