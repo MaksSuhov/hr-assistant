@@ -1,5 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hr_assistant.infrastructure.db.repositories.application_repository import (
+    ApplicationRepository,
+)
 from hr_assistant.infrastructure.db.repositories.approval_repository import ApprovalRepository
 from hr_assistant.infrastructure.db.repositories.audit_repository import AuditRepository
 from hr_assistant.infrastructure.db.repositories.candidate_repository import CandidateRepository
@@ -13,6 +16,7 @@ class SqlAlchemyUnitOfWork:
         self.session = session
         self.vacancies = VacancyRepository(session)
         self.candidates = CandidateRepository(session)
+        self.applications = ApplicationRepository(session)
         self.resumes = ResumeRepository(session)
         self.audit = AuditRepository(session)
         self.approvals = ApprovalRepository(session)

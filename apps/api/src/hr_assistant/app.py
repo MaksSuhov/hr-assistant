@@ -38,6 +38,19 @@ def create_app(
             logger.warning(
                 "Qdrant is not available at startup; vector indexing will retry on upload."
             )
+        if (
+            resolved_settings.resume_retention_days > 0
+            or resolved_settings.audit_retention_days > 0
+        ):
+            try:
+                result = await resolved_container.candidates.purge_expired()
+                logger.info(
+                    "Retention purge deleted %s candidates and %s audit events.",
+                    result.deleted_candidates,
+                    result.deleted_audit_events,
+                )
+            except Exception:
+                logger.exception("Retention purge failed; records were left in place.")
         yield
         await resolved_container.close()
 

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from hr_assistant.domain.enums import CandidateStatus
+from hr_assistant.schemas.application import ApplicationOut
 
 
 class CandidateDocumentOut(BaseModel):
@@ -12,6 +12,8 @@ class CandidateDocumentOut(BaseModel):
     uploaded_by: str
     uploaded_at: datetime
     indexing_status: str
+    indexing_error: str | None = None
+    extraction_method: str = "pdf-text"
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -20,10 +22,10 @@ class CandidateOut(BaseModel):
     full_name: str | None
     email: str | None
     phone: str | None
-    status: CandidateStatus
     created_at: datetime
     updated_at: datetime
     sources: list[CandidateDocumentOut] = Field(default_factory=list)
+    applications: list[ApplicationOut] = Field(default_factory=list)
 
 
 class AuditEventOut(BaseModel):

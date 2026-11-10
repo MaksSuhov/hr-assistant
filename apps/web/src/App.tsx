@@ -29,6 +29,20 @@ type CandidateDocument = {
   uploaded_by: string;
   uploaded_at: string;
   indexing_status: string;
+  indexing_error: string | null;
+  extraction_method: string;
+};
+
+type Application = {
+  id: string;
+  candidate_id: string;
+  candidate_name: string | null;
+  vacancy_id: string;
+  vacancy_title: string;
+  stage: string;
+  stage_changed_at: string;
+  created_at: string;
+  updated_at: string;
 };
 
 type Candidate = {
@@ -36,10 +50,10 @@ type Candidate = {
   full_name: string | null;
   email: string | null;
   phone: string | null;
-  status: string;
   created_at: string;
   updated_at: string;
   sources: CandidateDocument[];
+  applications: Application[];
 };
 
 type Vacancy = {
@@ -65,6 +79,10 @@ const statusLabels: Record<string, string> = {
   paused: "На паузе",
   closed: "Закрыта",
 };
+
+function candidateStage(candidate: Candidate) {
+  return candidate.applications[0]?.stage ?? "new";
+}
 
 function Glyph({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -243,11 +261,11 @@ export default function App() {
     const file = audience === "candidate" ? portalFile : uploadFile;
     const candidateName = audience === "candidate" ? portalName : uploadName;
     if (!file) {
-      setToast("Добавьте резюме в формате PDF.");
+      setToast("Добавьте резюме в формате PDF или DOCX.");
       return;
     }
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setToast("Пока принимаются только файлы PDF.");
+    if (!/\.(pdf|docx)$/i.test(file.name)) {
+      setToast("Принимаются файлы PDF и DOCX.");
       return;
     }
     if (file.size > 15 * 1024 * 1024) {
@@ -258,6 +276,7 @@ export default function App() {
     const form = new FormData();
     form.append("file", file);
     if (candidateName.trim()) form.append("candidate_name", candidateName.trim());
+    if (audience === "hr" && selectedVacancyId) form.append("vacancy_id", selectedVacancyId);
     form.append("source", audience === "candidate" ? "Портал кандидата" : uploadSource);
     try {
       const response = await apiFetch(`${API}${audience === "candidate" ? "/resumes/public" : "/resumes"}`, {
@@ -412,13 +431,13 @@ function Overview({ candidates, vacancies, openRoles, onNavigate, onCandidate, o
     <section className="metric-row" aria-label="Сводка">
       <Metric label="Открытые вакансии" value={openRoles.length} caption="в работе" icon="briefcase" />
       <Metric label="Кандидаты" value={candidates.length} caption="в базе" icon="people" />
-      <Metric label="Новые отклики" value={candidates.filter((candidate) => candidate.status === "new").length} caption="нужен первый взгляд" icon="inbox" muted />
+      <Metric label="Новые отклики" value={candidates.filter((candidate) => candidateStage(candidate) === "new").length} caption="нужен первый взгляд" icon="inbox" muted />
     </section>
 
     <div className="overview-grid">
       <section className="panel candidates-panel">
         <div className="panel-heading"><div><div className="eyebrow">ПОСЛЕДНИЕ ОТКЛИКИ</div><h2>Кандидаты</h2></div><button className="text-link" onClick={() => onNavigate("candidates")}>Все кандидаты <Glyph name="arrow" size={15} /></button></div>
-        {candidates.length ? <CandidateTable candidates={candidates.slice(0, 5)} onCandidate={onCandidate} /> : <EmptyState title="Здесь появятся кандидаты" text="Добавьте PDF или передайте ассистенту ссылку на профиль." action="Добавить отклик" onClick={() => onNavigate("inbox")} />}
+        {candidates.length ? <CandidateTable candidates={candidates.slice(0, 5)} onCandidate={onCandidate} /> : <EmptyState title="Здесь появятся кандидаты" text="Добавьте PDF или DOCX либо передайте ассистенту ссылку на профиль." action="Добавить отклик" onClick={() => onNavigate("inbox")} />}
       </section>
       <div className="overview-aside">
         <section className="assistant-card">
@@ -440,7 +459,7 @@ function Metric({ label, value, caption, icon, muted = false }: { label: string;
 function CandidateTable({ candidates, onCandidate }: { candidates: Candidate[]; onCandidate: (candidate: Candidate) => void }) {
   return <div className="candidate-list"><div className="candidate-list-head"><span>КАНДИДАТ</span><span>ИСТОЧНИК</span><span>ДОБАВЛЕН</span><span>СТАТУС</span><span /></div>{candidates.map((candidate, index) => {
     const source = candidate.sources[0];
-    return <button className="candidate-row" key={candidate.id} onClick={() => onCandidate(candidate)}><span className="candidate-person"><span className={`candidate-avatar avatar-${index % 4}`}>{initials(candidate.full_name)}</span><span><strong>{candidate.full_name || "Имя не указано"}</strong><small>{source?.filename || "Профиль кандидата"}</small></span></span><span className="source-label"><i className={source?.source.toLowerCase().includes("hh") ? "red-source" : ""} />{source?.source || "—"}</span><span className="row-date">{dateLabel(candidate.created_at)}</span><span><StatusPill status={candidate.status} /></span><Glyph name="chevron" size={16} /></button>;
+    return <button className="candidate-row" key={candidate.id} onClick={() => onCandidate(candidate)}><span className="candidate-person"><span className={`candidate-avatar avatar-${index % 4}`}>{initials(candidate.full_name)}</span><span><strong>{candidate.full_name || "Имя не указано"}</strong><small>{source?.filename || "Профиль кандидата"}</small></span></span><span className="source-label"><i className={source?.source.toLowerCase().includes("hh") ? "red-source" : ""} />{source?.source || "—"}</span><span className="row-date">{dateLabel(candidate.created_at)}</span><span><StatusPill status={candidateStage(candidate)} /></span><Glyph name="chevron" size={16} /></button>;
   })}</div>;
 }
 
@@ -451,7 +470,7 @@ function EmptyState({ title, text, action, onClick }: { title: string; text: str
 }
 
 function CandidatesPage({ candidates, onCandidate, onUpload }: { candidates: Candidate[]; onCandidate: (candidate: Candidate) => void; onUpload: () => void }) {
-  return <><section className="page-heading compact-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> БАЗА КАНДИДАТОВ</div><h1>Люди, а не <span>строки.</span></h1><p>Материалы и источники собраны в карточках, чтобы важное не терялось.</p></div><button className="button button-primary" onClick={onUpload}><Glyph name="plus" size={17} /> Добавить кандидата</button></section><section className="panel full-panel"><div className="panel-heading"><div><div className="eyebrow">ВСЕ ОТКЛИКИ</div><h2>{candidates.length} {plural(candidates.length, "кандидат", "кандидата", "кандидатов")}</h2></div><span className="quiet-search"><Glyph name="search" size={15} /> Обновляется из базы</span></div>{candidates.length ? <CandidateTable candidates={candidates} onCandidate={onCandidate} /> : <EmptyState title="Пока тихо" text="Добавьте PDF или попросите ассистента проверить ссылку на профиль." action="Перейти во входящие" onClick={onUpload} />}</section></>;
+  return <><section className="page-heading compact-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> БАЗА КАНДИДАТОВ</div><h1>Люди, а не <span>строки.</span></h1><p>Материалы и источники собраны в карточках, чтобы важное не терялось.</p></div><button className="button button-primary" onClick={onUpload}><Glyph name="plus" size={17} /> Добавить кандидата</button></section><section className="panel full-panel"><div className="panel-heading"><div><div className="eyebrow">ВСЕ ОТКЛИКИ</div><h2>{candidates.length} {plural(candidates.length, "кандидат", "кандидата", "кандидатов")}</h2></div><span className="quiet-search"><Glyph name="search" size={15} /> Обновляется из базы</span></div>{candidates.length ? <CandidateTable candidates={candidates} onCandidate={onCandidate} /> : <EmptyState title="Пока тихо" text="Добавьте PDF или DOCX либо попросите ассистента проверить ссылку на профиль." action="Перейти во входящие" onClick={onUpload} />}</section></>;
 }
 
 function VacanciesPage({ vacancies, onCreate }: { vacancies: Vacancy[]; onCreate: () => void }) {
@@ -478,7 +497,7 @@ function InboxPage({ activeTab, setActiveTab, uploadName, setUploadName, uploadS
     <div className="intake-layout">
       <section className="panel intake-panel">
         <div className="intake-tabs">
-          <button className={activeTab === "file" ? "selected" : ""} onClick={() => setActiveTab("file")}><Glyph name="file" size={16} /> Резюме PDF</button>
+          <button className={activeTab === "file" ? "selected" : ""} onClick={() => setActiveTab("file")}><Glyph name="file" size={16} /> Резюме PDF/DOCX</button>
           <button className={activeTab === "link" ? "selected" : ""} onClick={() => setActiveTab("link")}><Glyph name="link" size={16} /> Ссылка</button>
         </div>
         {activeTab === "file" ? <form onSubmit={submitUpload} className="intake-form">
@@ -486,7 +505,7 @@ function InboxPage({ activeTab, setActiveTab, uploadName, setUploadName, uploadS
           <label className="form-label"><span className="field-title">Сопоставить с вакансией <em>необязательно</em></span><select value={selectedVacancyId} onChange={(event) => setSelectedVacancyId(event.target.value)}><option value="">Без вакансии</option>{vacancies.map((vacancy) => <option value={vacancy.id} key={vacancy.id}>{vacancy.title}</option>)}</select></label>
           <label className="form-label"><span className="field-title">Откуда пришёл отклик</span><select value={uploadSource} onChange={(event) => setUploadSource(event.target.value)}><option>Почта отдела кадров</option><option>Telegram</option><option>hh.ru</option><option>Рекомендация</option><option>Сайт компании</option></select></label>
           <FilePicker file={uploadFile} onChange={setUploadFile} />
-          <div className="intake-submit-row"><span><Glyph name="check" size={14} /> PDF до 15 МБ · текст будет проиндексирован</span><button className="button button-primary" type="submit" disabled={uploading}>{uploading ? <span className="spinner" /> : <Glyph name="upload" size={16} />}{uploading ? "Загружаем" : "Добавить резюме"}</button></div>
+          <div className="intake-submit-row"><span><Glyph name="check" size={14} /> PDF или DOCX до 15 МБ · текст будет проиндексирован</span><button className="button button-primary" type="submit" disabled={uploading}>{uploading ? <span className="spinner" /> : <Glyph name="upload" size={16} />}{uploading ? "Загружаем" : "Добавить резюме"}</button></div>
         </form> : <form onSubmit={submitLink} className="intake-form link-form">
           <label className="form-label"><span className="field-title">Ссылка на профиль</span><input type="url" required value={linkValue} onChange={(event) => setLinkValue(event.target.value)} placeholder="https://hh.ru/resume/... или t.me/..." /></label>
           <label className="form-label"><span className="field-title">Вакансия для разбора <em>необязательно</em></span><select value={selectedVacancyId} onChange={(event) => setSelectedVacancyId(event.target.value)}><option value="">Без вакансии</option>{vacancies.map((vacancy) => <option value={vacancy.id} key={vacancy.id}>{vacancy.title}</option>)}</select></label>
@@ -513,9 +532,9 @@ function FilePicker({ file, onChange }: { file: File | null; onChange: (file: Fi
     onChange(event.dataTransfer.files?.[0] ?? null);
   };
   return <label className={`file-picker ${file ? "has-file" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
-    <input type="file" accept=".pdf,application/pdf" onChange={handleChange} />
+    <input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleChange} />
     <span className="file-picker-icon"><Glyph name={file ? "check" : "upload"} size={19} /></span>
-    <span className="file-picker-copy"><strong>{file ? file.name : "Перетащите PDF сюда или выберите файл"}</strong><small>{file ? `${(file.size / (1024 * 1024)).toFixed(1)} МБ · выберите снова, чтобы заменить` : "Только PDF, до 15 МБ"}</small></span>
+    <span className="file-picker-copy"><strong>{file ? file.name : "Перетащите PDF или DOCX сюда или выберите файл"}</strong><small>{file ? `${(file.size / (1024 * 1024)).toFixed(1)} МБ · выберите снова, чтобы заменить` : "PDF или DOCX, до 15 МБ"}</small></span>
   </label>;
 }
 
@@ -526,7 +545,7 @@ function AssistantPanel({ messages, draft, setDraft, pending, configured, onSend
 }
 
 function CandidateDrawer({ candidate, onClose, onAsk }: { candidate: Candidate; onClose: () => void; onAsk: () => void }) {
-  return <><button className="drawer-scrim candidate-scrim" onClick={onClose} aria-label="Закрыть карточку" /><aside className="candidate-drawer"><header className="candidate-drawer-head"><span className="eyebrow">КАРТОЧКА КАНДИДАТА</span><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Glyph name="close" size={18} /></button></header><div className="candidate-profile"><div className="large-avatar">{initials(candidate.full_name)}</div><h2>{candidate.full_name || "Имя не указано"}</h2><StatusPill status={candidate.status} /><p>{candidate.email || candidate.phone || "Контактные данные не добавлены"}</p></div><div className="profile-divider" /><div className="eyebrow">ИСТОЧНИКИ</div><div className="source-documents">{candidate.sources.length ? candidate.sources.map((source) => <div className="source-document" key={source.id}><span><Glyph name="file" size={17} /></span><div><strong>{source.filename}</strong><small>{source.source} · {dateLabel(source.uploaded_at)}</small></div><i className={source.indexing_status === "indexed" ? "indexed" : "pending-index"} /></div>) : <p className="empty-inline">Документы ещё не добавлены.</p>}</div><div className="candidate-drawer-actions"><button className="button button-primary" onClick={onAsk}><Glyph name="sparkle" size={16} /> Попросить ассистента разобрать</button><span>Ассистент использует только доступные материалы и назовёт источники.</span></div><div className="drawer-date">В базе с {dateLabel(candidate.created_at)}</div></aside></>;
+  return <><button className="drawer-scrim candidate-scrim" onClick={onClose} aria-label="Закрыть карточку" /><aside className="candidate-drawer"><header className="candidate-drawer-head"><span className="eyebrow">КАРТОЧКА КАНДИДАТА</span><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Glyph name="close" size={18} /></button></header><div className="candidate-profile"><div className="large-avatar">{initials(candidate.full_name)}</div><h2>{candidate.full_name || "Имя не указано"}</h2><StatusPill status={candidateStage(candidate)} /><p>{candidate.email || candidate.phone || "Контактные данные не добавлены"}</p></div><div className="profile-divider" /><div className="eyebrow">ОТКЛИКИ</div><div className="source-documents">{candidate.applications.length ? candidate.applications.map((application) => <div className="source-document" key={application.id}><span><Glyph name="briefcase" size={17} /></span><div><strong>{application.vacancy_title}</strong><small>{statusLabels[application.stage] || application.stage}</small></div></div>) : <p className="empty-inline">Кандидат пока не привязан к вакансии.</p>}</div><div className="eyebrow">ИСТОЧНИКИ</div><div className="source-documents">{candidate.sources.length ? candidate.sources.map((source) => <div className="source-document" key={source.id}><span><Glyph name="file" size={17} /></span><div><strong>{source.filename}</strong><small>{source.source} · {dateLabel(source.uploaded_at)}</small></div><i className={source.indexing_status === "indexed" ? "indexed" : "pending-index"} /></div>) : <p className="empty-inline">Документы ещё не добавлены.</p>}</div><div className="candidate-drawer-actions"><button className="button button-primary" onClick={onAsk}><Glyph name="sparkle" size={16} /> Попросить ассистента разобрать</button><span>Ассистент использует только доступные материалы и назовёт источники.</span></div><div className="drawer-date">В базе с {dateLabel(candidate.created_at)}</div></aside></>;
 }
 
 function CandidatePortal({ name, setName, file, setFile, submitted, uploading, submit }: { name: string; setName: (value: string) => void; file: File | null; setFile: (file: File | null) => void; submitted: boolean; uploading: boolean; submit: (event: FormEvent) => void }) {
@@ -536,8 +555,8 @@ function CandidatePortal({ name, setName, file, setFile, submitted, uploading, s
       <div className="portal-kicker"><span className="eyebrow-line" /> ПОРТАЛ КАНДИДАТА</div>
       {submitted ? <section className="portal-success"><span className="success-icon"><Glyph name="check" size={23} /></span><div className="eyebrow">РЕЗЮМЕ ПОЛУЧЕНО</div><h1>Спасибо, <span>что откликнулись.</span></h1><p>Файл сохранён. Команда найма сможет посмотреть его и вернуться к вам, если опыт совпадёт с открытой ролью.</p><a href="/" className="button button-outline">Вернуться на главную <Glyph name="arrow" size={15} /></a></section> :
         <div className="portal-grid">
-          <section className="portal-copy"><h1>Расскажите<br /><span>о своём опыте.</span></h1><p>Загрузите резюме, чтобы команда могла внимательно ознакомиться с вашим опытом. Ваш документ будет прикреплён к карточке кандидата.</p><div className="portal-promise"><span><Glyph name="check" size={15} /></span><span><strong>Только по делу</strong><small>Никаких длинных форм — достаточно PDF.</small></span></div><div className="portal-promise"><span><Glyph name="check" size={15} /></span><span><strong>С заботой о контексте</strong><small>Ассистент помогает команде читать документы, не принимает решения о найме.</small></span></div></section>
-          <form className="portal-form" onSubmit={submit}><div className="eyebrow">ВАШ ОТКЛИК</div><label className="form-label"><span className="field-title">Как к вам обращаться</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Имя и фамилия" /></label><div className="form-label"><span className="field-title">Резюме в PDF</span></div><FilePicker file={file} onChange={setFile} /><button className="button button-primary portal-submit" type="submit" disabled={uploading}>{uploading ? <span className="spinner" /> : <Glyph name="upload" size={16} />}{uploading ? "Отправляем" : "Передать резюме"}</button><p className="privacy-note">Отправляя файл, вы передаёте его команде найма для рассмотрения отклика.</p></form>
+          <section className="portal-copy"><h1>Расскажите<br /><span>о своём опыте.</span></h1><p>Загрузите резюме, чтобы команда могла внимательно ознакомиться с вашим опытом. Ваш документ будет прикреплён к карточке кандидата.</p><div className="portal-promise"><span><Glyph name="check" size={15} /></span><span><strong>Только по делу</strong><small>Никаких длинных форм — достаточно PDF или DOCX.</small></span></div><div className="portal-promise"><span><Glyph name="check" size={15} /></span><span><strong>С заботой о контексте</strong><small>Ассистент помогает команде читать документы, не принимает решения о найме.</small></span></div></section>
+          <form className="portal-form" onSubmit={submit}><div className="eyebrow">ВАШ ОТКЛИК</div><label className="form-label"><span className="field-title">Как к вам обращаться</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Имя и фамилия" /></label><div className="form-label"><span className="field-title">Резюме в PDF или DOCX</span></div><FilePicker file={file} onChange={setFile} /><button className="button button-primary portal-submit" type="submit" disabled={uploading}>{uploading ? <span className="spinner" /> : <Glyph name="upload" size={16} />}{uploading ? "Отправляем" : "Передать резюме"}</button><p className="privacy-note">Отправляя файл, вы передаёте его команде найма для рассмотрения отклика.</p></form>
         </div>}
     </main>
     <footer className="portal-footer"><span>Линия <span className="footer-dot">·</span> рабочее пространство найма</span><span>Вопросы? Ответьте на письмо с вакансией.</span></footer>

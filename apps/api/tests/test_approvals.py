@@ -1,30 +1,37 @@
 from tests.support import upload_resume
 
 
-async def _candidate(auth_client, make_pdf) -> str:
-    response = await upload_resume(auth_client, make_pdf("Python developer"))
-    assert response.status_code == 201
-    return response.json()["id"]
+async def _application(auth_client, make_pdf) -> tuple[str, str, str]:
+    vacancy = await auth_client.post(
+        "/api/v1/vacancies",
+        json={"title": "Backend developer", "requirements": []},
+    )
+    vacancy_id = vacancy.json()["id"]
+    uploaded = await upload_resume(auth_client, make_pdf("Python developer"), vacancy_id=vacancy_id)
+    assert uploaded.status_code == 201, uploaded.text
+    candidate = uploaded.json()
+    return candidate["id"], candidate["applications"][0]["id"], vacancy_id
 
 
-async def test_status_change_requires_approval_then_applies_it(auth_client, make_pdf):
-    candidate_id = await _candidate(auth_client, make_pdf)
+async def test_stage_change_requires_approval_then_applies_it(auth_client, make_pdf):
+    candidate_id, application_id, vacancy_id = await _application(auth_client, make_pdf)
 
     requested = await auth_client.post(
-        f"/api/v1/approvals/candidates/{candidate_id}/status-change/request",
-        json={"status": "interview", "reason": "Resume reviewed"},
+        f"/api/v1/vacancies/{vacancy_id}/applications/{application_id}/stage-change/request",
+        json={"stage": "interview", "reason": "Resume reviewed"},
     )
-    assert requested.status_code == 202
+    assert requested.status_code == 202, requested.text
     approval = requested.json()
     assert approval["status"] == "pending"
-    assert approval["action_type"] == "candidate_status_change"
-    assert approval["payload"]["to_status"] == "interview"
+    assert approval["action_type"] == "application_stage_change"
+    assert approval["payload"]["to_stage"] == "interview"
+    assert approval["payload"]["application_id"] == application_id
 
     pending = await auth_client.get("/api/v1/approvals/pending")
     assert [item["id"] for item in pending.json()] == [approval["id"]]
 
     candidate_before = await auth_client.get(f"/api/v1/candidates/{candidate_id}")
-    assert candidate_before.json()["status"] == "new"
+    assert candidate_before.json()["applications"][0]["stage"] == "new"
 
     approved = await auth_client.post(
         f"/api/v1/approvals/{approval['id']}/approve",
@@ -33,17 +40,17 @@ async def test_status_change_requires_approval_then_applies_it(auth_client, make
     assert approved.status_code == 200, approved.text
     result = approved.json()
     assert result["approval"]["status"] == "approved"
-    assert result["outcome"] == "candidate_status_updated"
+    assert result["outcome"] == "application_stage_updated"
 
     candidate_after = await auth_client.get(f"/api/v1/candidates/{candidate_id}")
-    assert candidate_after.json()["status"] == "interview"
+    assert candidate_after.json()["applications"][0]["stage"] == "interview"
 
 
 async def test_double_approval_returns_conflict(auth_client, make_pdf):
-    candidate_id = await _candidate(auth_client, make_pdf)
+    candidate_id, application_id, vacancy_id = await _application(auth_client, make_pdf)
     requested = await auth_client.post(
-        f"/api/v1/approvals/candidates/{candidate_id}/status-change/request",
-        json={"status": "review"},
+        f"/api/v1/vacancies/{vacancy_id}/applications/{application_id}/stage-change/request",
+        json={"stage": "screening"},
     )
     approval_id = requested.json()["id"]
 
@@ -54,11 +61,11 @@ async def test_double_approval_returns_conflict(auth_client, make_pdf):
     assert second.status_code == 409
 
 
-async def test_reject_leaves_candidate_unchanged(auth_client, make_pdf):
-    candidate_id = await _candidate(auth_client, make_pdf)
+async def test_reject_leaves_application_unchanged(auth_client, make_pdf):
+    candidate_id, application_id, vacancy_id = await _application(auth_client, make_pdf)
     requested = await auth_client.post(
-        f"/api/v1/approvals/candidates/{candidate_id}/status-change/request",
-        json={"status": "hired"},
+        f"/api/v1/vacancies/{vacancy_id}/applications/{application_id}/stage-change/request",
+        json={"stage": "hired"},
     )
     approval_id = requested.json()["id"]
 
@@ -70,14 +77,14 @@ async def test_reject_leaves_candidate_unchanged(auth_client, make_pdf):
     assert rejected.status_code == 200
     assert rejected.json()["outcome"] == "action_rejected"
     candidate = await auth_client.get(f"/api/v1/candidates/{candidate_id}")
-    assert candidate.json()["status"] == "new"
+    assert candidate.json()["applications"][0]["stage"] == "new"
 
     after_reject = await auth_client.post(f"/api/v1/approvals/{approval_id}/approve", json={})
     assert after_reject.status_code == 409
 
 
 async def test_approved_message_is_queued_in_outbox(auth_client, make_pdf):
-    candidate_id = await _candidate(auth_client, make_pdf)
+    candidate_id, _, _ = await _application(auth_client, make_pdf)
 
     draft = await auth_client.post(
         "/api/v1/approvals/messages/drafts",
@@ -90,6 +97,14 @@ async def test_approved_message_is_queued_in_outbox(auth_client, make_pdf):
     )
     assert draft.status_code == 202
     approval_id = draft.json()["id"]
+
+    history = await auth_client.get(f"/api/v1/candidates/{candidate_id}/history")
+    requested = [
+        event
+        for event in history.json()
+        if event["action"] == "candidate_message_approval_requested"
+    ]
+    assert requested[0]["details"]["recipient"] == "c***@example.org"
 
     approved = await auth_client.post(f"/api/v1/approvals/{approval_id}/approve", json={})
     assert approved.status_code == 200
@@ -104,7 +119,7 @@ async def test_approved_message_is_queued_in_outbox(auth_client, make_pdf):
 
 
 async def test_configured_smtp_marks_message_as_sent(auth_client, make_pdf, fake_sender):
-    candidate_id = await _candidate(auth_client, make_pdf)
+    candidate_id, _, _ = await _application(auth_client, make_pdf)
     draft = await auth_client.post(
         "/api/v1/approvals/messages/drafts",
         json={
@@ -125,12 +140,14 @@ async def test_configured_smtp_marks_message_as_sent(auth_client, make_pdf, fake
     assert outbox.json()[0]["status"] == "sent"
 
 
-async def test_approval_requests_validate_targets(auth_client):
-    missing_candidate = await auth_client.post(
-        "/api/v1/approvals/candidates/missing/status-change/request",
-        json={"status": "review"},
+async def test_approval_requests_validate_targets(auth_client, make_pdf):
+    candidate_id, application_id, vacancy_id = await _application(auth_client, make_pdf)
+
+    missing_application = await auth_client.post(
+        f"/api/v1/vacancies/{vacancy_id}/applications/missing/stage-change/request",
+        json={"stage": "screening"},
     )
-    assert missing_candidate.status_code == 404
+    assert missing_application.status_code == 404
 
     missing_message_candidate = await auth_client.post(
         "/api/v1/approvals/messages/drafts",
@@ -148,13 +165,13 @@ async def test_approval_requests_validate_targets(auth_client):
 
 
 async def test_approval_payload_validation(auth_client, make_pdf):
-    candidate_id = await _candidate(auth_client, make_pdf)
+    candidate_id, application_id, vacancy_id = await _application(auth_client, make_pdf)
 
-    bad_status = await auth_client.post(
-        f"/api/v1/approvals/candidates/{candidate_id}/status-change/request",
-        json={"status": "not-a-status"},
+    bad_stage = await auth_client.post(
+        f"/api/v1/vacancies/{vacancy_id}/applications/{application_id}/stage-change/request",
+        json={"stage": "not-a-stage"},
     )
-    assert bad_status.status_code == 422
+    assert bad_stage.status_code == 422
 
     bad_recipient = await auth_client.post(
         "/api/v1/approvals/messages/drafts",

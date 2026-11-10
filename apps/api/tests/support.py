@@ -43,6 +43,9 @@ async def upload_resume(
     filename: str = "resume.pdf",
     endpoint: str = "/api/v1/resumes",
     authenticated: bool = True,
+    email: str | None = None,
+    phone: str | None = None,
+    vacancy_id: str | None = None,
 ) -> httpx.Response:
     if authenticated:
         sync_csrf(client)
@@ -51,6 +54,12 @@ async def upload_resume(
         data["candidate_name"] = candidate_name
     if candidate_id is not None:
         data["candidate_id"] = candidate_id
+    if email is not None:
+        data["email"] = email
+    if phone is not None:
+        data["phone"] = phone
+    if vacancy_id is not None:
+        data["vacancy_id"] = vacancy_id
     return await client.post(
         endpoint,
         data=data,
@@ -186,12 +195,37 @@ class FakeLLM:
         self.closed = True
 
 
+class FakeReranker:
+    """Duck-typed stand-in for OnnxCrossEncoderReranker.
+
+    Scores are taken from ``scores`` by document text; documents that are not
+    listed score 0.0, so a test only has to name the chunks it cares about.
+    """
+
+    def __init__(self) -> None:
+        self.scores: dict[str, float] = {}
+        self.calls: list[tuple[str, list[str], int]] = []
+        self.fail = False
+
+    async def rerank(self, query: str, documents: list[str], limit: int) -> list[tuple[int, float]]:
+        self.calls.append((query, list(documents), limit))
+        if self.fail:
+            raise RuntimeError("reranker is unavailable")
+        scored = [(index, self.scores.get(text, 0.0)) for index, text in enumerate(documents)]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:limit]
+
+
 class FakeVectorStore:
     def __init__(self) -> None:
         self.points: list[dict[str, Any]] = []
         self.queries: list[tuple[str, int, list[str] | None]] = []
+        self.deleted_resumes: list[str] = []
+        self.deleted_candidates: list[str] = []
+        self.reassignments: list[tuple[str, str]] = []
         self.fail_index = False
         self.fail_search = False
+        self.fail_delete = False
         self.closed = False
 
     async def ensure_collection(self) -> None:
@@ -217,6 +251,26 @@ class FakeVectorStore:
                     "text": text,
                 }
             )
+
+    async def delete_resume(self, resume_id: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("vector store is unavailable")
+        self.deleted_resumes.append(resume_id)
+        self.points = [point for point in self.points if point["resume_id"] != resume_id]
+
+    async def delete_candidate(self, candidate_id: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("vector store is unavailable")
+        self.deleted_candidates.append(candidate_id)
+        self.points = [point for point in self.points if point["candidate_id"] != candidate_id]
+
+    async def reassign_candidate(self, source_id: str, target_id: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("vector store is unavailable")
+        self.reassignments.append((source_id, target_id))
+        for point in self.points:
+            if point["candidate_id"] == source_id:
+                point["candidate_id"] = target_id
 
     async def search(
         self,
@@ -360,6 +414,28 @@ def build_pdf(
         f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_position}\n%%EOF\n"
     ).encode("latin-1")
     return bytes(buffer)
+
+
+def build_docx(
+    text: str = "Python developer with FastAPI", *, table: list[list[str]] | None = None
+) -> bytes:
+    """Build a DOCX with paragraphs and an optional table."""
+
+    from io import BytesIO
+
+    from docx import Document
+
+    document = Document()
+    for line in text.splitlines():
+        document.add_paragraph(line)
+    if table:
+        doc_table = document.add_table(rows=len(table), cols=len(table[0]))
+        for row_index, row in enumerate(table):
+            for column_index, value in enumerate(row):
+                doc_table.cell(row_index, column_index).text = value
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 def sse_events(body: str) -> list[tuple[str, str]]:

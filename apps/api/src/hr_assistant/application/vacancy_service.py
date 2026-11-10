@@ -124,6 +124,7 @@ class VacancyService:
             description=record.description,
             status=VacancyStatus(record.status),
             requirements=[RequirementOut.model_validate(item) for item in requirements],
+            applications_count=await uow.applications.count_for_vacancy(record.id),
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 
 from hr_assistant.application.tool_executor import ToolExecutor
+from hr_assistant.schemas.application import ApplicationOut
 from hr_assistant.schemas.candidate import CandidateOut
 from hr_assistant.schemas.matching import (
     CandidateSearchHit,
@@ -36,11 +37,33 @@ class StubCandidates:
             full_name="Candidate",
             email=None,
             phone=None,
-            status="new",
             created_at=now,
             updated_at=now,
             sources=[],
+            applications=[],
         )
+
+
+class StubApplications:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    async def list_for_vacancy(self, vacancy_id: str, limit: int = 200) -> list[ApplicationOut]:
+        self.calls.append((vacancy_id, limit))
+        now = datetime.now(UTC)
+        return [
+            ApplicationOut(
+                id="a1",
+                candidate_id="c1",
+                candidate_name="Candidate",
+                vacancy_id=vacancy_id,
+                vacancy_title="Backend",
+                stage="interview",
+                stage_changed_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
 
 
 class StubMatching:
@@ -61,7 +84,10 @@ class StubMatching:
 
 def build_executor() -> tuple[ToolExecutor, StubSearch]:
     search = StubSearch()
-    return ToolExecutor(StubCandidates(), search, StubMatching()), search
+    return (
+        ToolExecutor(StubCandidates(), search, StubMatching(), StubApplications()),
+        search,
+    )
 
 
 async def test_search_tool_clamps_limit():
@@ -94,6 +120,19 @@ async def test_get_candidate_profile_tool():
     )
 
     assert payload["id"] == "c1"
+
+
+async def test_list_vacancy_applications_tool():
+    executor, _ = build_executor()
+
+    payload = json.loads(
+        await executor.execute(
+            "list_vacancy_applications", json.dumps({"vacancy_id": "v1", "limit": 99})
+        )
+    )
+
+    assert payload[0]["vacancy_id"] == "v1"
+    assert payload[0]["stage"] == "interview"
 
 
 async def test_compare_tool():

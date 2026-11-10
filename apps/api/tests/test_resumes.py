@@ -12,7 +12,7 @@ async def test_upload_extracts_text_indexes_and_creates_candidate(
     assert response.status_code == 201, response.text
     candidate = response.json()
     assert candidate["full_name"] == "Алексей Иванов"
-    assert candidate["status"] == "new"
+    assert candidate["applications"] == []
     assert len(candidate["sources"]) == 1
     assert candidate["sources"][0]["filename"] == "resume.pdf"
     assert candidate["sources"][0]["indexing_status"] == "indexed"
@@ -52,14 +52,14 @@ async def test_upload_to_unknown_candidate_returns_404(auth_client, make_pdf):
 async def test_upload_rejects_bad_files(auth_client, make_pdf):
     wrong_extension = await upload_resume(auth_client, make_pdf(RESUME_TEXT), filename="resume.txt")
     assert wrong_extension.status_code == 422
-    assert "valid PDF" in wrong_extension.json()["detail"]
+    assert "PDF or DOCX" in wrong_extension.json()["detail"]
 
     not_a_pdf = await upload_resume(auth_client, b"definitely not a pdf")
     assert not_a_pdf.status_code == 422
 
     blank = await upload_resume(auth_client, make_pdf(pages=[""]))
     assert blank.status_code == 422
-    assert "No selectable text" in blank.json()["detail"]
+    assert "No readable text" in blank.json()["detail"]
 
 
 async def test_failed_indexing_is_recorded_but_upload_survives(
@@ -82,6 +82,8 @@ async def test_failed_indexing_is_recorded_but_upload_survives(
     )
     assert details["indexing_status"] == "failed"
     assert details["indexing_error"] == "RuntimeError"
+    assert "text_preview" not in details
+    assert "filename" not in details
 
 
 async def test_public_upload_needs_no_session(client, make_pdf):

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -7,6 +8,8 @@ from qdrant_client import AsyncQdrantClient, models
 
 from hr_assistant.application.ports import EmbeddingProvider
 from hr_assistant.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantResumeStore:
@@ -29,24 +32,67 @@ class QdrantResumeStore:
         return self._sparse_encoder
 
     async def ensure_collection(self) -> None:
-        if await self.client.collection_exists(self.settings.qdrant_collection):
-            return
-        await self.client.create_collection(
-            collection_name=self.settings.qdrant_collection,
-            vectors_config={
-                self.DENSE_VECTOR_NAME: models.VectorParams(
-                    size=self.settings.openai_embedding_dimensions,
-                    distance=models.Distance.COSINE,
+        if not await self.client.collection_exists(self.settings.qdrant_collection):
+            await self.client.create_collection(
+                collection_name=self.settings.qdrant_collection,
+                vectors_config={
+                    self.DENSE_VECTOR_NAME: models.VectorParams(
+                        size=self.settings.openai_embedding_dimensions,
+                        distance=models.Distance.COSINE,
+                    )
+                },
+                sparse_vectors_config={
+                    self.BM25_VECTOR_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)
+                },
+            )
+        await self._ensure_payload_indexes()
+
+    async def _ensure_payload_indexes(self) -> None:
+        """Index the filter fields used by deletion and re-indexing.
+
+        The calls are idempotent from the caller's point of view: Qdrant may
+        reject an index that already exists, which is not an error here.
+        """
+
+        for field_name in ("candidate_id", "resume_id"):
+            try:
+                await self.client.create_payload_index(
+                    collection_name=self.settings.qdrant_collection,
+                    field_name=field_name,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
                 )
-            },
-            sparse_vectors_config={
-                self.BM25_VECTOR_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)
-            },
+            except Exception:
+                logger.debug("Qdrant payload index %s already exists", field_name)
+
+    @staticmethod
+    def _filter(field: str, value: str) -> models.Filter:
+        return models.Filter(
+            must=[models.FieldCondition(key=field, match=models.MatchValue(value=value))]
         )
-        await self.client.create_payload_index(
+
+    async def delete_resume(self, resume_id: str) -> None:
+        await self._delete_by_filter("resume_id", resume_id)
+
+    async def delete_candidate(self, candidate_id: str) -> None:
+        await self._delete_by_filter("candidate_id", candidate_id)
+
+    async def _delete_by_filter(self, field: str, value: str) -> None:
+        if not await self.client.collection_exists(self.settings.qdrant_collection):
+            return
+        await self.client.delete(
             collection_name=self.settings.qdrant_collection,
-            field_name="candidate_id",
-            field_schema=models.PayloadSchemaType.KEYWORD,
+            points_selector=models.FilterSelector(filter=self._filter(field, value)),
+            wait=True,
+        )
+
+    async def reassign_candidate(self, source_id: str, target_id: str) -> None:
+        if not await self.client.collection_exists(self.settings.qdrant_collection):
+            return
+        await self.client.set_payload(
+            collection_name=self.settings.qdrant_collection,
+            payload={"candidate_id": target_id},
+            points=self._filter("candidate_id", source_id),
+            wait=True,
         )
 
     async def index_resume(

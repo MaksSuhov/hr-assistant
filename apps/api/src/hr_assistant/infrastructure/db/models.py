@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -72,8 +82,41 @@ class CandidateRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     full_name: Mapped[str | None] = mapped_column(String(300))
     email: Mapped[str | None] = mapped_column(String(320))
+    # Lower-cased email and digits-only phone used for de-duplication. They are
+    # kept next to the display values so lookups do not scan every candidate.
+    email_normalized: Mapped[str | None] = mapped_column(String(320), index=True)
     phone: Mapped[str | None] = mapped_column(String(80))
-    status: Mapped[str] = mapped_column(String(20), default="new", nullable=False)
+    phone_normalized: Mapped[str | None] = mapped_column(String(24), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ApplicationRecord(Base):
+    """One candidate's progress through one vacancy.
+
+    The pipeline stage lives here rather than on the candidate, so the same
+    person can be at different stages in different vacancies.
+    """
+
+    __tablename__ = "applications"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "vacancy_id", name="uq_applications_candidate_vacancy"),
+    )
+    __mapper_args__ = {"eager_defaults": True}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    vacancy_id: Mapped[str] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage: Mapped[str] = mapped_column(String(20), default="new", nullable=False, index=True)
+    stage_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -92,7 +135,12 @@ class ResumeDocumentRecord(Base):
     source: Mapped[str] = mapped_column(String(500), default="HR upload", nullable=False)
     uploaded_by: Mapped[str] = mapped_column(String(200), nullable=False)
     extracted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # SHA-256 of whitespace-normalised text. Two uploads of the same document
+    # point at the same value, which makes duplicate detection cheap.
+    content_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    extraction_method: Mapped[str] = mapped_column(String(20), default="pdf-text", nullable=False)
     indexing_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)
+    indexing_error: Mapped[str | None] = mapped_column(String(500))
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

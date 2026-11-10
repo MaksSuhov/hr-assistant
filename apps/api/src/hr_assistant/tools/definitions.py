@@ -21,11 +21,29 @@ HR_ASSISTANT_TOOLS: list[Any] = [
         "type": "function",
         "function": {
             "name": "get_candidate_profile",
-            "description": "Get a candidate card with resume sources and current status.",
+            "description": (
+                "Get a candidate card with resume sources and per-vacancy applications."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"candidate_id": {"type": "string"}},
                 "required": ["candidate_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_vacancy_applications",
+            "description": "List applications for a vacancy with each candidate's stage.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "vacancy_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["vacancy_id"],
                 "additionalProperties": False,
             },
         },

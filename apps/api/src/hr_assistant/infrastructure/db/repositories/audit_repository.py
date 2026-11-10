@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hr_assistant.infrastructure.db.models import AuditEventRecord
@@ -22,3 +22,10 @@ class AuditRepository:
             .order_by(AuditEventRecord.created_at.desc())
         )
         return list(result)
+
+    async def delete_older_than(self, cutoff) -> int:
+        result = await self.session.execute(
+            delete(AuditEventRecord).where(AuditEventRecord.created_at < cutoff)
+        )
+        await self.session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)

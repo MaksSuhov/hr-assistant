@@ -2,12 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from hr_assistant.domain.enums import ApprovalActionType, ApprovalStatus, CandidateStatus
-
-
-class StatusChangeRequest(BaseModel):
-    status: CandidateStatus
-    reason: str | None = Field(default=None, max_length=1000)
+from hr_assistant.domain.enums import ApprovalActionType, ApprovalStatus
 
 
 class MessageDraftRequest(BaseModel):

@@ -8,7 +8,6 @@ from hr_assistant.schemas.approval import (
     ApprovalResult,
     MessageDraftRequest,
     OutboxMessageOut,
-    StatusChangeRequest,
 )
 
 router = APIRouter(dependencies=[Depends(authenticated_user)])
@@ -22,20 +21,6 @@ async def pending_approvals(request: Request, limit: int = Query(default=100, ge
 @router.get("/outbox", response_model=list[OutboxMessageOut])
 async def message_outbox(request: Request, limit: int = Query(default=100, ge=1, le=100)):
     return await get_container(request).approvals.list_outbox(limit)
-
-
-@router.post(
-    "/candidates/{candidate_id}/status-change/request", response_model=ApprovalOut, status_code=202
-)
-async def request_candidate_status_change(
-    candidate_id: str,
-    data: StatusChangeRequest,
-    request: Request,
-    actor_id: str = Depends(get_actor_id),
-):
-    return await get_container(request).approvals.request_status_change(
-        candidate_id, data, actor_id
-    )
 
 
 @router.post("/messages/drafts", response_model=ApprovalOut, status_code=202)

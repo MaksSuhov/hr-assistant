@@ -4,14 +4,15 @@ from datetime import UTC, datetime
 from hr_assistant.application.audit import record_event
 from hr_assistant.application.errors import ConflictError, NotFoundError
 from hr_assistant.application.ports import MessageSender, UnitOfWorkProvider
+from hr_assistant.domain.contacts import mask_email
 from hr_assistant.domain.enums import ApprovalActionType, ApprovalStatus
 from hr_assistant.infrastructure.db.models import ApprovalActionRecord, OutboxMessageRecord
+from hr_assistant.schemas.application import StageChangeRequest
 from hr_assistant.schemas.approval import (
     ApprovalOut,
     ApprovalResult,
     MessageDraftRequest,
     OutboxMessageOut,
-    StatusChangeRequest,
 )
 
 
@@ -20,21 +21,28 @@ class ApprovalService:
         self.uow_provider = uow_provider
         self.message_sender = message_sender
 
-    async def request_status_change(
-        self, candidate_id: str, data: StatusChangeRequest, actor_id: str
+    async def request_stage_change(
+        self, application_id: str, data: StageChangeRequest, actor_id: str
     ) -> ApprovalOut:
         async with self.uow_provider() as uow:
-            candidate = await uow.candidates.get(candidate_id)
+            application = await uow.applications.get(application_id)
+            if not application:
+                raise NotFoundError(f"Application {application_id} was not found.")
+            candidate = await uow.candidates.get(application.candidate_id)
             if not candidate:
-                raise NotFoundError(f"Candidate {candidate_id} was not found.")
+                raise NotFoundError(f"Candidate {application.candidate_id} was not found.")
+            vacancy = await uow.vacancies.get(application.vacancy_id)
             approval = ApprovalActionRecord(
                 id=str(uuid.uuid4()),
-                action_type=ApprovalActionType.CANDIDATE_STATUS_CHANGE.value,
+                action_type=ApprovalActionType.APPLICATION_STAGE_CHANGE.value,
                 status=ApprovalStatus.PENDING.value,
                 payload={
-                    "candidate_id": candidate_id,
-                    "from_status": candidate.status,
-                    "to_status": data.status.value,
+                    "application_id": application_id,
+                    "candidate_id": application.candidate_id,
+                    "vacancy_id": application.vacancy_id,
+                    "vacancy_title": vacancy.title if vacancy else None,
+                    "from_stage": application.stage,
+                    "to_stage": data.stage.value,
                     "reason": data.reason,
                 },
                 requested_by=actor_id,
@@ -43,10 +51,17 @@ class ApprovalService:
             await record_event(
                 uow,
                 actor_id=actor_id,
-                action="candidate_status_change_requested",
+                action="application_stage_change_requested",
                 entity_type="candidate",
-                entity_id=candidate_id,
-                details={"approval_id": approval.id, **approval.payload},
+                entity_id=application.candidate_id,
+                details={
+                    "approval_id": approval.id,
+                    "application_id": application_id,
+                    "vacancy_id": application.vacancy_id,
+                    "from_stage": application.stage,
+                    "to_stage": data.stage.value,
+                    "reason": data.reason,
+                },
             )
             await uow.commit()
             return ApprovalOut.model_validate(approval)
@@ -72,7 +87,7 @@ class ApprovalService:
                 entity_id=data.candidate_id,
                 details={
                     "approval_id": approval.id,
-                    "recipient": data.recipient,
+                    "recipient": mask_email(data.recipient),
                     "subject": data.subject,
                 },
             )
@@ -99,25 +114,32 @@ class ApprovalService:
                 raise ConflictError("This action has already been resolved.")
 
             outcome: str
-            if approval.action_type == ApprovalActionType.CANDIDATE_STATUS_CHANGE.value:
-                candidate_id = approval.payload["candidate_id"]
-                candidate = await uow.candidates.get(candidate_id)
+            if approval.action_type == ApprovalActionType.APPLICATION_STAGE_CHANGE.value:
+                payload = approval.payload
+                application_id = payload["application_id"]
+                application = await uow.applications.get(application_id)
+                if not application:
+                    raise NotFoundError(f"Application {application_id} was not found.")
+                candidate = await uow.candidates.get(application.candidate_id)
                 if not candidate:
-                    raise NotFoundError(f"Candidate {candidate_id} was not found.")
-                before = candidate.status
-                candidate.status = approval.payload["to_status"]
-                outcome = "candidate_status_updated"
+                    raise NotFoundError(f"Candidate {application.candidate_id} was not found.")
+                before = application.stage
+                application.stage = payload["to_stage"]
+                application.stage_changed_at = datetime.now(UTC)
+                outcome = "application_stage_updated"
                 await record_event(
                     uow,
                     actor_id=actor_id,
-                    action="candidate_status_changed",
+                    action="application_stage_changed",
                     entity_type="candidate",
-                    entity_id=candidate_id,
+                    entity_id=application.candidate_id,
                     details={
                         "approval_id": approval.id,
+                        "application_id": application.id,
+                        "vacancy_id": application.vacancy_id,
                         "before": before,
-                        "after": candidate.status,
-                        "reason": approval.payload.get("reason"),
+                        "after": application.stage,
+                        "reason": payload.get("reason"),
                     },
                 )
             elif approval.action_type == ApprovalActionType.SEND_MESSAGE.value:
@@ -153,7 +175,7 @@ class ApprovalService:
                     entity_id=candidate_id,
                     details={
                         "approval_id": approval.id,
-                        "recipient": payload["recipient"],
+                        "recipient": mask_email(payload["recipient"]),
                         "subject": payload["subject"],
                     },
                 )
@@ -200,7 +222,7 @@ class ApprovalService:
                     entity_id=candidate_id,
                     details={
                         "approval_id": current_approval_id,
-                        "recipient": recipient,
+                        "recipient": mask_email(recipient),
                         "subject": subject,
                         "outbox_status": delivery_status,
                         "delivery_error": delivery_error,

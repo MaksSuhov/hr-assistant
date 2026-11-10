@@ -45,3 +45,13 @@ class ApprovalRepository:
             message.status = status
             message.last_error = last_error
             await self.session.flush()
+
+    async def reassign_outbox(self, source_id: str, target_id: str) -> int:
+        result = await self.session.scalars(
+            select(OutboxMessageRecord).where(OutboxMessageRecord.candidate_id == source_id)
+        )
+        messages = list(result)
+        for message in messages:
+            message.candidate_id = target_id
+        await self.session.flush()
+        return len(messages)

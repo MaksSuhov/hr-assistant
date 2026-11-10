@@ -39,6 +39,19 @@ class Settings(BaseSettings):
     storage_dir: Path = Path("./storage/resumes")
     max_upload_bytes: int = Field(default=15 * 1024 * 1024, ge=1024)
 
+    # Scanned PDFs have no text layer. When OCR is enabled and pypdf extracts
+    # fewer than OCR_MIN_TEXT_CHARS characters, pages are rendered and passed to
+    # the system tesseract binary (rus+eng by default).
+    ocr_enabled: bool = True
+    ocr_languages: str = "rus+eng"
+    ocr_min_text_chars: int = Field(default=40, ge=1)
+    ocr_max_pages: int = Field(default=20, ge=1, le=200)
+
+    # 0 disables automatic deletion. The maintenance endpoint and the startup
+    # purge only act when a positive number of days is configured.
+    resume_retention_days: int = Field(default=0, ge=0)
+    audit_retention_days: int = Field(default=0, ge=0)
+
     # Per-IP sliding-window limits. Counters are in-memory and therefore
     # per-worker; use a single uvicorn worker or replace them with Redis when
     # scaling horizontally.

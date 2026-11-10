@@ -14,9 +14,15 @@ def create_mcp_server(container: ServiceContainer) -> FastMCP:
 
     @mcp.tool
     async def get_candidate_profile(candidate_id: str) -> dict:
-        """Return one candidate card and its resume sources."""
+        """Return one candidate card, its resume sources and applications."""
         result = await container.candidates.get(candidate_id)
         return result.model_dump(mode="json")
+
+    @mcp.tool
+    async def list_vacancy_applications(vacancy_id: str, limit: int = 20) -> list[dict]:
+        """List candidates who applied to a vacancy and their current stage."""
+        results = await container.applications.list_for_vacancy(vacancy_id, min(max(limit, 1), 50))
+        return [item.model_dump(mode="json") for item in results]
 
     @mcp.tool
     async def compare_candidates(vacancy_id: str, candidate_ids: list[str]) -> dict:
