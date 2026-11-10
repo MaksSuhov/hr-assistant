@@ -1,4 +1,5 @@
 from hr_assistant.container import ServiceContainer
+from hr_assistant.domain.contacts import content_hash
 from hr_assistant.infrastructure.db.models import CandidateRecord, ResumeDocumentRecord
 from tests.support import json_response
 
@@ -15,9 +16,7 @@ async def _add_document(
         candidate = await uow.candidates.get(candidate_id)
         if candidate is None:
             await uow.candidates.add(
-                CandidateRecord(
-                    id=candidate_id, full_name=f"Candidate {candidate_id}", status="new"
-                )
+                CandidateRecord(id=candidate_id, full_name=f"Candidate {candidate_id}")
             )
         await uow.resumes.add(
             ResumeDocumentRecord(
@@ -27,6 +26,7 @@ async def _add_document(
                 storage_path=f"/tmp/{resume_id}.pdf",
                 uploaded_by="hr@example.org",
                 extracted_text=text,
+                content_hash=content_hash(text),
                 indexing_status="indexed",
             )
         )
@@ -54,29 +54,62 @@ async def test_lexical_fallback_ignores_too_short_terms(container, fake_vector_s
     assert await container.search.search_raw("a b", limit=5) == []
 
 
-async def test_rerank_reorders_hits_and_normalizes_scores(container, fake_vector_store, fake_llm):
+async def test_rerank_reorders_hits_and_uses_local_scores(
+    container, fake_vector_store, fake_reranker
+):
     container.settings.reranking_enabled = True
-    fake_llm.configured = True
     await fake_vector_store.index_resume(
         resume_id="r1",
         candidate_id="c1",
         source_filename="resume.pdf",
         chunks=["Python developer", "FastAPI developer"],
     )
-    fake_llm.completions.responses.append(
-        json_response({"ranking": [{"index": 1, "score": 90}, {"index": 0, "score": 10}]})
-    )
+    fake_reranker.scores = {"FastAPI developer": 0.9, "Python developer": 0.1}
 
     hits = await container.search.search_raw("Python FastAPI", limit=2)
 
     assert [hit["text"] for hit in hits] == ["FastAPI developer", "Python developer"]
     assert hits[0]["score"] == 0.9
-    assert fake_llm.completions.calls[0]["response_format"] == {"type": "json_object"}
+    assert fake_reranker.calls[0][0] == "Python FastAPI"
+    assert fake_reranker.calls[0][2] == 2
 
 
-async def test_rerank_keeps_hybrid_order_when_llm_fails(container, fake_vector_store, fake_llm):
+async def test_rerank_pulls_a_larger_pool_than_the_requested_limit(
+    container, fake_vector_store, fake_reranker
+):
     container.settings.reranking_enabled = True
-    fake_llm.configured = True
+    container.settings.reranking_candidate_pool = 40
+    await fake_vector_store.index_resume(
+        resume_id="r1",
+        candidate_id="c1",
+        source_filename="resume.pdf",
+        chunks=["Python developer"],
+    )
+
+    await container.search.search_raw("Python", limit=1)
+
+    assert fake_vector_store.queries[0][1] == 40
+
+
+async def test_rerank_works_without_an_llm_and_keeps_hybrid_order_on_failure(
+    container, fake_vector_store, fake_reranker
+):
+    container.settings.reranking_enabled = True
+    await fake_vector_store.index_resume(
+        resume_id="r1",
+        candidate_id="c1",
+        source_filename="resume.pdf",
+        chunks=["Python developer", "FastAPI developer"],
+    )
+    fake_reranker.fail = True
+
+    hits = await container.search.search_raw("Python FastAPI", limit=2)
+
+    assert {hit["text"] for hit in hits} == {"Python developer", "FastAPI developer"}
+
+
+async def test_rerank_is_skipped_when_disabled(container, fake_vector_store, fake_reranker):
+    container.settings.reranking_enabled = False
     await fake_vector_store.index_resume(
         resume_id="r1",
         candidate_id="c1",
@@ -84,9 +117,10 @@ async def test_rerank_keeps_hybrid_order_when_llm_fails(container, fake_vector_s
         chunks=["Python developer", "FastAPI developer"],
     )
 
-    hits = await container.search.search_raw("Python FastAPI", limit=2)
+    await container.search.search_raw("Python FastAPI", limit=2)
 
-    assert {hit["text"] for hit in hits} == {"Python developer", "FastAPI developer"}
+    assert fake_reranker.calls == []
+    assert fake_vector_store.queries[0][1] == 2
 
 
 async def test_hyde_appends_hypothetical_document_to_the_search_query(
@@ -115,6 +149,28 @@ async def test_hyde_failure_keeps_original_query(container, fake_vector_store, f
 
     assert hits
     assert fake_vector_store.queries[0][0] == "backend engineer"
+
+
+async def test_deep_false_skips_hyde_and_reranking(
+    container, fake_vector_store, fake_reranker, fake_llm
+):
+    container.settings.hyde_enabled = True
+    container.settings.reranking_enabled = True
+    container.settings.reranking_candidate_pool = 40
+    fake_llm.configured = True
+    await fake_vector_store.index_resume(
+        resume_id="r1",
+        candidate_id="c1",
+        source_filename="resume.pdf",
+        chunks=["Python developer", "FastAPI developer"],
+    )
+
+    hits = await container.search.search_raw("Python FastAPI", limit=1, deep=False)
+
+    assert fake_llm.completions.calls == []
+    assert fake_reranker.calls == []
+    assert fake_vector_store.queries == [("Python FastAPI", 1, None)]
+    assert len(hits) == 1
 
 
 async def test_search_maps_candidates_and_deduplicates_chunks(

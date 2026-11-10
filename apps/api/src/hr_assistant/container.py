@@ -23,6 +23,7 @@ from hr_assistant.infrastructure.llm.openai_provider import OpenAIProvider
 from hr_assistant.infrastructure.messages.smtp_sender import SmtpMessageSender
 from hr_assistant.infrastructure.observability.langfuse_tracer import LangfuseTracer
 from hr_assistant.infrastructure.vector.qdrant_store import QdrantResumeStore
+from hr_assistant.infrastructure.vector.reranker import OnnxCrossEncoderReranker
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class ServiceContainer:
         message_sender: Any | None = None,
         extractor: Any | None = None,
         chunker: Any | None = None,
+        reranker: Any | None = None,
     ) -> None:
         self.settings = settings
         self.database = Database(settings)
@@ -52,6 +54,8 @@ class ServiceContainer:
         )
         self.extractor = extractor if extractor is not None else self._build_extractor(settings)
         self.chunker = chunker if chunker is not None else ResumeTextChunker()
+        # Constructing the reranker is cheap: the ONNX model loads on first use.
+        self.reranker = reranker if reranker is not None else OnnxCrossEncoderReranker(settings)
 
         uow_provider = self.database.unit_of_work
         self.vacancies = VacancyService(uow_provider)
@@ -63,7 +67,9 @@ class ServiceContainer:
             self.chunker,
             self.vector_store,
         )
-        self.search = SearchService(uow_provider, self.vector_store, self.llm, settings)
+        self.search = SearchService(
+            uow_provider, self.vector_store, self.llm, settings, self.reranker
+        )
         self.matching = MatchingService(uow_provider, self.search, self.llm, settings)
         self.approvals = ApprovalService(uow_provider, self.message_sender)
         self.tool_executor = ToolExecutor(

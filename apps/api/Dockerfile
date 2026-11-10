@@ -20,7 +20,12 @@ COPY apps/api/src ./src
 COPY apps/api/eval ./eval
 RUN pip install --no-cache-dir .
 
-RUN mkdir -p /app/data/resumes
+# The local ONNX reranker downloads its model on first search. The cache lives
+# under /app/data, which docker compose already mounts as a named volume, so the
+# ~1 GB download survives container rebuilds.
+ENV FASTEMBED_CACHE_PATH=/app/data/fastembed
+
+RUN mkdir -p /app/data/resumes /app/data/fastembed
 
 EXPOSE 8000
 CMD ["uvicorn", "hr_assistant.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -50,12 +50,19 @@ class MatchingService:
                 clarification="Добавьте требования, чтобы сопоставить кандидата.",
             )
 
-        evidence_by_requirement: dict[str, list[EvidenceSnippet]] = {}
-        for requirement in requirements:
-            hits = await self.search_service.search_raw(
-                requirement.text, limit=4, candidate_ids=[candidate_id]
+        results = await asyncio.gather(
+            *(
+                self.search_service.search_raw(
+                    requirement.text,
+                    limit=4,
+                    candidate_ids=[candidate_id],
+                    deep=False,
+                )
+                for requirement in requirements
             )
-            evidence_by_requirement[requirement.id] = [
+        )
+        evidence_by_requirement: dict[str, list[EvidenceSnippet]] = {
+            requirement.id: [
                 EvidenceSnippet(
                     text=str(hit.get("text", ""))[:900],
                     source_filename=str(hit.get("source_filename", "")),
@@ -64,6 +71,8 @@ class MatchingService:
                 )
                 for hit in hits
             ]
+            for requirement, hits in zip(requirements, results, strict=True)
+        }
 
         if self.llm.configured:
             try:

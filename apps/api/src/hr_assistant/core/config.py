@@ -78,8 +78,17 @@ class Settings(BaseSettings):
     openai_chat_model: str = "qwen/qwen3.7-flash"
     search_enhancement_model: str = "qwen/qwen3.7-flash"
     hyde_enabled: bool = True
+    # Reranking runs a local ONNX cross-encoder through fastembed, so no LLM
+    # tokens are spent per search. The first search downloads the model into the
+    # fastembed cache (or RERANKING_CACHE_DIR); later starts reuse it.
     reranking_enabled: bool = True
     reranking_candidate_pool: int = Field(default=30, ge=5, le=100)
+    # bge-reranker-v2-m3 is multilingual (Russian resumes), int8 keeps the ONNX
+    # download small; bge-reranker-base is the English-only alternative.
+    reranking_model: str = "BAAI/bge-reranker-v2-m3-int8"
+    reranking_device: Literal["auto", "cpu", "cuda"] = "auto"
+    reranking_batch_size: int = Field(default=32, ge=1, le=256)
+    reranking_cache_dir: Path | None = None
     chat_reasoning_enabled: bool = False
     eval_judge_model: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"

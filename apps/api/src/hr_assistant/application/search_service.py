@@ -1,11 +1,9 @@
-import json
 import logging
 import re
 from typing import Any
 
-from hr_assistant.application.ports import ResumeVectorStore, UnitOfWorkProvider
+from hr_assistant.application.ports import ResumeReranker, ResumeVectorStore, UnitOfWorkProvider
 from hr_assistant.core.config import Settings
-from hr_assistant.core.prompt_safety import RESUME_DATA_RULE, wrap_resume_text
 from hr_assistant.infrastructure.llm.openai_provider import OpenAIProvider
 from hr_assistant.schemas.matching import CandidateSearchHit
 
@@ -19,17 +17,29 @@ class SearchService:
         vector_store: ResumeVectorStore,
         llm: OpenAIProvider | None = None,
         settings: Settings | None = None,
+        reranker: ResumeReranker | None = None,
     ) -> None:
         self.uow_provider = uow_provider
         self.vector_store = vector_store
         self.llm = llm
         self.settings = settings
+        self.reranker = reranker
 
     async def search_raw(
-        self, query: str, limit: int = 10, candidate_ids: list[str] | None = None
+        self,
+        query: str,
+        limit: int = 10,
+        candidate_ids: list[str] | None = None,
+        deep: bool = True,
     ) -> list[dict[str, Any]]:
+        """Search resumes by text.
+
+        ``deep=True`` adds the expensive steps: a HyDE query rewrite and local
+        reranking. Batch consumers such as matching call it with ``deep=False``
+        to avoid one LLM call per query and trust the hybrid RRF order instead.
+        """
         settings = self.settings
-        enhancements_enabled = self._enhancements_enabled
+        enhancements_enabled = deep and self._enhancements_enabled
         search_query = query
         if enhancements_enabled and settings is not None and settings.hyde_enabled:
             try:
@@ -38,9 +48,7 @@ class SearchService:
             except Exception:
                 logger.exception("HyDE query generation failed; using the original query")
         try:
-            reranking_enabled = bool(
-                enhancements_enabled and settings is not None and settings.reranking_enabled
-            )
+            reranking_enabled = deep and self._reranking_enabled
             retrieval_limit = (
                 max(limit, settings.reranking_candidate_pool)
                 if reranking_enabled and settings is not None
@@ -48,7 +56,7 @@ class SearchService:
             )
             hits = await self.vector_store.search(search_query, retrieval_limit, candidate_ids)
             if hits:
-                return await self._rerank(query, hits, limit)
+                return hits[:limit] if not deep else await self._rerank(query, hits, limit)
         except Exception:
             logger.exception("Hybrid resume search failed; falling back to local text search")
         return await self._lexical_fallback(query, limit, candidate_ids)
@@ -56,6 +64,14 @@ class SearchService:
     @property
     def _enhancements_enabled(self) -> bool:
         return bool(self.llm and self.llm.configured and self.settings)
+
+    @property
+    def _reranking_enabled(self) -> bool:
+        return bool(
+            self.reranker is not None
+            and self.settings is not None
+            and self.settings.reranking_enabled
+        )
 
     async def _hypothetical_document(self, query: str) -> str:
         if self.llm is None or self.settings is None:
@@ -84,70 +100,21 @@ class SearchService:
     async def _rerank(
         self, query: str, hits: list[dict[str, Any]], limit: int
     ) -> list[dict[str, Any]]:
-        llm = self.llm
-        settings = self.settings
-        if not (
-            llm is not None
-            and llm.configured
-            and settings is not None
-            and settings.reranking_enabled
-            and len(hits) > 1
-        ):
+        reranker = self.reranker
+        if reranker is None or not self._reranking_enabled or len(hits) < 2:
             return hits[:limit]
-        candidates = [
-            {"index": index, "text": wrap_resume_text(str(hit.get("text", ""))[:1800])}
-            for index, hit in enumerate(hits)
-        ]
+        documents = [str(hit.get("text", "")) for hit in hits]
         try:
-            response = await llm.require_client().chat.completions.create(
-                model=settings.search_enhancement_model,
-                temperature=0,
-                max_tokens=min(1000, 30 + len(hits) * 12),
-                response_format={"type": "json_object"},
-                extra_body=llm.chat_extra_body,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Оцени релевантность каждого фрагмента резюме поисковому запросу. "
-                            "Учитывай соответствие опыта и навыков, а не только общие слова. "
-                            "Не делай выводов о найме. " + RESUME_DATA_RULE + " Верни JSON вида "
-                            '{"ranking":[{"index":0,"score":0}]}. score — целое число от 0 до 100. '
-                            "Включи каждый переданный индекс ровно один раз."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {"query": query, "candidates": candidates}, ensure_ascii=False
-                        ),
-                    },
-                ],
-            )
-            payload = json.loads(response.choices[0].message.content or "{}")
-            scores = {
-                item["index"]: max(0, min(100, int(item["score"])))
-                for item in payload.get("ranking", [])
-                if isinstance(item, dict)
-                and isinstance(item.get("index"), int)
-                and 0 <= item["index"] < len(hits)
-                and isinstance(item.get("score"), (int, float))
-            }
-            if not scores:
-                return hits[:limit]
-            ordered = sorted(
-                enumerate(hits), key=lambda pair: scores.get(pair[0], -1), reverse=True
-            )
-            result = []
-            for index, hit in ordered[:limit]:
-                score = scores.get(index)
-                result.append(
-                    {**hit, "score": score / 100 if score is not None else hit.get("score")}
-                )
-            return result
-        except Exception:
-            logger.exception("Resume reranking failed; preserving hybrid search order")
+            ranked = await reranker.rerank(query, documents, limit)
+        except Exception as error:
+            # The reranker logs the root cause with a traceback once; repeating
+            # it for every search would bury the useful lines in the log.
+            logger.warning("Local reranking failed; preserving hybrid search order: %s", error)
             return hits[:limit]
+        selected = [
+            {**hits[index], "score": score} for index, score in ranked if 0 <= index < len(hits)
+        ]
+        return selected or hits[:limit]
 
     async def search(self, query: str, limit: int = 10) -> list[CandidateSearchHit]:
         hits = await self.search_raw(query, limit)

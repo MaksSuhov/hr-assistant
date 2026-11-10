@@ -37,9 +37,7 @@ async def _seed_vacancy(
 
 async def _seed_candidate(container: ServiceContainer, candidate_id: str = "c1") -> None:
     async with container.database.unit_of_work() as uow:
-        await uow.candidates.add(
-            CandidateRecord(id=candidate_id, full_name="Candidate", status="new")
-        )
+        await uow.candidates.add(CandidateRecord(id=candidate_id, full_name="Candidate"))
         await uow.commit()
 
 
@@ -136,6 +134,36 @@ async def test_llm_failure_falls_back_to_evidence_only(container, fake_vector_st
 
     assert analysis.clarification
     assert analysis.requirement_evidence[0].status is EvidenceStatus.UNKNOWN
+
+
+async def test_matching_searches_requirements_without_deep_enhancements(
+    container, fake_vector_store, fake_llm, fake_reranker
+):
+    container.settings.hyde_enabled = True
+    await _seed_vacancy(
+        container,
+        requirements=[("req1", "Python experience"), ("req2", "Team leadership")],
+    )
+    await _seed_candidate(container)
+    await fake_vector_store.index_resume(
+        resume_id="r1",
+        candidate_id="c1",
+        source_filename="resume.pdf",
+        chunks=["Python developer", "Led a team of five engineers"],
+    )
+    fake_llm.configured = True
+
+    analysis = await container.matching.match_candidate("v1", "c1")
+
+    # Only the analysis call is made; HyDE would add one call per requirement.
+    # It fails here because no response is queued, so evidence-only wins.
+    assert len(fake_llm.completions.calls) == 1
+    assert fake_reranker.calls == []
+    assert [query for query, _, _ in fake_vector_store.queries] == [
+        "Python experience",
+        "Team leadership",
+    ]
+    assert analysis.requirement_evidence[0].evidence
 
 
 async def test_compare_returns_one_analysis_per_candidate(container):

@@ -11,6 +11,7 @@ from hr_assistant.container import ServiceContainer
 from hr_assistant.core.config import Settings
 from tests.support import (
     FakeLLM,
+    FakeReranker,
     FakeSender,
     FakeTracer,
     FakeVectorStore,
@@ -53,6 +54,11 @@ def fake_vector_store() -> FakeVectorStore:
 
 
 @pytest.fixture
+def fake_reranker() -> FakeReranker:
+    return FakeReranker()
+
+
+@pytest.fixture
 def fake_tracer() -> FakeTracer:
     return FakeTracer()
 
@@ -67,6 +73,7 @@ async def container(
     settings: Settings,
     fake_llm: FakeLLM,
     fake_vector_store: FakeVectorStore,
+    fake_reranker: FakeReranker,
     fake_tracer: FakeTracer,
     fake_sender: FakeSender,
 ) -> AsyncIterator[ServiceContainer]:
@@ -76,6 +83,7 @@ async def container(
         vector_store=fake_vector_store,
         tracer=fake_tracer,
         message_sender=fake_sender,
+        reranker=fake_reranker,
     )
     await service_container.database.initialize()
     try:
