@@ -1,12 +1,22 @@
 import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
+from eval.cases import build_template_case
 from eval.classification import evaluate_classification
+from eval.corpus import Corpus, CorpusEntry, corpus_snapshot, load_corpus
 from eval.io import load_records, write_report
 from eval.judge import _as_contexts, _validate_scores
 from eval.performance import _percentile
+from eval.pipeline import collect_answers
 from eval.retrieval import evaluate_retrieval
+from hr_assistant.core.config import Settings
+from hr_assistant.infrastructure.db.database import Database
+from hr_assistant.infrastructure.db.models import CandidateRecord, ResumeDocumentRecord
 
 
 def test_load_records_reads_jsonl(tmp_path):
@@ -140,7 +150,7 @@ def test_judge_scores_are_validated():
             },
             reference_available=False,
         )
-    with pytest.raises(ValueError, match="missing numeric score"):
+    with pytest.raises(ValueError, match="must be a number"):
         _validate_scores(
             {
                 "faithfulness": True,
@@ -157,3 +167,220 @@ def test_percentile_handles_empty_and_bounds():
     assert _percentile([], 0.5) is None
     assert _percentile([1, 2, 3, 4], 0.5) == 2
     assert _percentile([1, 2, 3, 4], 0.95) == 4
+
+
+def _eval_settings(tmp_path: Path) -> Settings:
+    return Settings(
+        _env_file=None,
+        app_env="test",
+        auth_secret_key=SecretStr("test-signing-key-that-is-long-enough-32"),
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'eval.db'}",
+        openai_api_key=None,
+        qdrant_url="http://127.0.0.1:1",
+        rate_limit_enabled=False,
+        log_level="CRITICAL",
+    )
+
+
+async def _seed_corpus(
+    settings: Settings,
+    candidates: list[tuple[str, str | None, list[tuple[str, str, datetime]]]],
+) -> None:
+    database = Database(settings)
+    await database.initialize()
+    try:
+        async with database.session() as session:
+            for candidate_id, name, _resumes in candidates:
+                session.add(CandidateRecord(id=candidate_id, full_name=name))
+            await session.flush()
+            for candidate_id, _name, resumes in candidates:
+                for resume_id, text, uploaded_at in resumes:
+                    session.add(
+                        ResumeDocumentRecord(
+                            id=resume_id,
+                            candidate_id=candidate_id,
+                            original_filename=f"{resume_id}.pdf",
+                            storage_path=f"/tmp/{resume_id}.pdf",
+                            uploaded_by="test",
+                            extracted_text=text,
+                            content_hash=resume_id.ljust(64, "0"),
+                            uploaded_at=uploaded_at,
+                        )
+                    )
+            await session.commit()
+    finally:
+        await database.close()
+
+
+async def test_load_corpus_returns_freshest_resume_per_candidate(tmp_path):
+    settings = _eval_settings(tmp_path)
+    await _seed_corpus(
+        settings,
+        [
+            (
+                "c-old",
+                "Old Candidate",
+                [("r-old-1", "old text", datetime(2026, 1, 1))],
+            ),
+            (
+                "c-new",
+                "New Candidate",
+                [
+                    ("r-new-1", "older resume", datetime(2026, 1, 2)),
+                    ("r-new-2", "newest resume", datetime(2026, 1, 3)),
+                ],
+            ),
+        ],
+    )
+
+    corpus = await load_corpus(settings, limit=None)
+
+    assert [entry.candidate_id for entry in corpus.entries] == ["c-new", "c-old"]
+    assert corpus.entries[0].resume_id == "r-new-2"
+    assert corpus.entries[0].candidate_name == "New Candidate"
+    assert corpus.total_candidates == 2
+
+
+async def test_load_corpus_honours_limit_and_rejects_zero(tmp_path):
+    settings = _eval_settings(tmp_path)
+    await _seed_corpus(
+        settings,
+        [
+            ("c1", "One", [("r1", "one", datetime(2026, 1, 1))]),
+            ("c2", "Two", [("r2", "two", datetime(2026, 1, 2))]),
+        ],
+    )
+
+    corpus = await load_corpus(settings, limit=1)
+
+    assert [entry.candidate_id for entry in corpus.entries] == ["c2"]
+    with pytest.raises(ValueError, match="at least 1"):
+        await load_corpus(settings, limit=0)
+
+
+def _entry(candidate_id: str, text: str) -> CorpusEntry:
+    return CorpusEntry(
+        candidate_id=candidate_id,
+        candidate_name=f"Name {candidate_id}",
+        resume_id=f"{candidate_id}-resume",
+        source_filename=f"{candidate_id}.pdf",
+        text=text,
+        uploaded_at=None,
+    )
+
+
+def test_corpus_snapshot_truncates_and_reports_loss():
+    corpus = Corpus(
+        entries=(_entry("c1", "abcdefghij"), _entry("c2", "klmnopqrst")),
+        total_candidates=5,
+    )
+
+    snapshot = corpus_snapshot(corpus, max_chars_per_resume=5, max_total_chars=8)
+
+    assert [item["text"] for item in snapshot["entries"]] == ["abcde", "klm"]
+    assert snapshot["included_candidates"] == 2
+    assert snapshot["total_candidates"] == 5
+    assert snapshot["truncated"] is True
+
+    clipped = corpus_snapshot(corpus, max_chars_per_resume=5, max_total_chars=4)
+    assert [item["text"] for item in clipped["entries"]] == ["abcd"]
+    assert clipped["included_candidates"] == 1
+    assert clipped["truncated"] is True
+
+
+def test_template_case_extracts_resume_facts():
+    entry = _entry(
+        "c1",
+        "Backend-разработчик (Python)\n6 лет опыта. PostgreSQL, Docker, FastAPI, Python.",
+    )
+
+    case = build_template_case(entry, 0)
+
+    assert case.candidate_id == "c1"
+    assert case.generator == "template"
+    assert case.question
+    assert "6" in case.reference_answer
+    assert "Python" in case.reference_answer
+    assert case.question_type in {"fact", "skill"}
+
+
+def test_judge_scores_accept_corpus_metrics():
+    payload = {
+        "faithfulness": 0.8,
+        "answer_relevancy": 0.9,
+        "context_relevancy": 0.7,
+        "context_precision": None,
+        "context_recall": None,
+        "corpus_faithfulness": 0.6,
+        "corpus_completeness": None,
+    }
+
+    scores = _validate_scores(payload, reference_available=False, corpus_available=True)
+    assert scores["corpus_faithfulness"] == pytest.approx(0.6)
+    assert scores["corpus_completeness"] is None
+
+    without_corpus = _validate_scores(payload, reference_available=False, corpus_available=False)
+    assert without_corpus["corpus_faithfulness"] is None
+    assert without_corpus["corpus_completeness"] is None
+
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        _validate_scores(
+            {**payload, "corpus_completeness": 1.5},
+            reference_available=False,
+            corpus_available=True,
+        )
+
+
+class _FakeChat:
+    configured = True
+
+    async def stream_chat(
+        self,
+        message: str,
+        conversation_id: str | None,
+        actor_id: str,
+        include_eval_metrics: bool = False,
+    ) -> Any:
+        assert include_eval_metrics
+        yield (
+            "contexts",
+            {"contexts": [{"id": "r1", "candidate_id": "c1", "text": "resume fragment"}]},
+        )
+        yield "token", {"text": "Ответ "}
+        yield "token", {"text": "ассистента"}
+        yield "eval_metrics", {"ttft_ms": 12.5}
+
+
+class _FailingChat:
+    configured = True
+
+    async def stream_chat(
+        self,
+        message: str,
+        conversation_id: str | None,
+        actor_id: str,
+        include_eval_metrics: bool = False,
+    ) -> Any:
+        raise RuntimeError("chat exploded")
+        yield  # pragma: no cover - makes this an async generator
+
+
+async def test_collect_answers_captures_answer_contexts_and_timing():
+    case = build_template_case(_entry("c1", "6 лет опыта Python"), 0)
+
+    records = await collect_answers(_FakeChat(), [case])
+
+    assert records[0]["answer"] == "Ответ ассистента"
+    assert records[0]["contexts"] == [{"id": "r1", "candidate_id": "c1", "text": "resume fragment"}]
+    assert records[0]["timing"] == {"ttft_ms": 12.5}
+    assert records[0]["error"] is None
+
+
+async def test_collect_answers_isolates_a_failing_case():
+    case = build_template_case(_entry("c1", "6 лет опыта Python"), 0)
+
+    records = await collect_answers(_FailingChat(), [case])
+
+    assert records[0]["answer"] == ""
+    assert records[0]["contexts"] == []
+    assert "chat exploded" in (records[0]["error"] or "")

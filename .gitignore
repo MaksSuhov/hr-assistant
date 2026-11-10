@@ -1,5 +1,7 @@
 .env
 .venv/
+.DS_Store
+.idea/
 __pycache__/
 *.py[cod]
 .ruff_cache/
@@ -10,7 +12,9 @@ coverage.xml
 htmlcov/
 reports/
 *.egg-info/
-data/
+# Only the repository-root corpus is ignored. Evaluation fixtures under
+# apps/api/eval/data stay tracked.
+/data/
 storage/resumes/*
 !storage/resumes/.gitkeep
 apps/api/storage/resumes/*

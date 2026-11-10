@@ -107,6 +107,24 @@ class ChatService:
                             for hit in retrieved
                         ]
                     )
+            if include_eval_metrics:
+                # Evaluation needs the exact evidence the model was given, not
+                # a re-run of search that could return a different ranking.
+                yield (
+                    "contexts",
+                    {
+                        "contexts": [
+                            {
+                                "id": str(hit.get("resume_id") or f"hit-{index + 1}"),
+                                "candidate_id": str(hit.get("candidate_id", "")),
+                                "source_filename": str(hit.get("source_filename", "")),
+                                "score": hit.get("score"),
+                                "text": str(hit.get("text", ""))[:1000],
+                            }
+                            for index, hit in enumerate(retrieved)
+                        ]
+                    },
+                )
             rag_context = (
                 "\n\n".join(
                     wrap_resume_text(
